@@ -501,7 +501,13 @@ export function usePatchLoader({
           if (!isCurrentRequest()) {
             return;
           }
-          const loadedData = buildCodeViewData(patchContent, patchRequestKey);
+          // Salt the tokenization cache key with the request id: this
+          // non-streamed path keys files by index, which would otherwise
+          // collide across reloads of changed local content.
+          const loadedData = buildCodeViewData(
+            patchContent,
+            `${patchRequestKey}#${requestId}`
+          );
           const fileHashes = await hashPatchFiles(patchContent);
           if (!isCurrentRequest()) {
             return;
@@ -675,15 +681,20 @@ export function usePatchLoader({
             );
           }
 
+          // The cache key must change when the file's content changes:
+          // downstream tokenization caches by key alone, and local diffs
+          // reload with new content under the same repo/path identity. The
+          // content hash keys the cache perfectly — unchanged files reuse
+          // their tokenization across reloads, changed files re-render.
+          const fileHashes = await hashFileBlock(fileText);
           const fileDiff = processFile(fileText, {
-            cacheKey: `${cacheKeyPrefix}-0-${accumulator.fileIndex}`,
+            cacheKey: `${cacheKeyPrefix}-${fileHashes.fileHash}`,
             isGitDiff: true,
           });
           if (fileDiff == null) {
             return;
           }
 
-          const fileHashes = await hashFileBlock(fileText);
           fileHashesByPathRef.current.set(fileHashes.filePath, fileHashes);
           if (fileDiff.name !== fileHashes.filePath) {
             fileHashesByPathRef.current.set(fileDiff.name, fileHashes);

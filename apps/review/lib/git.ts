@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { open, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -163,6 +164,43 @@ export async function resolveLocalDiffSource(
   }
 
   return { repoPath, branch, baseRef, mergeBase };
+}
+
+// Cheap fingerprint of everything the review diff depends on: the current
+// commit plus the porcelain status of tracked and untracked files. The
+// watcher polls this; a changed signature means the diff needs reloading.
+export async function computeRepoSignature(repoPath: string): Promise<string> {
+  const headSha =
+    (await gitText(repoPath, ['rev-parse', '--verify', '--quiet', 'HEAD'])) ??
+    'unborn';
+  const status = await runGit(repoPath, [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+    '--no-renames',
+  ]);
+  const hash = createHash('sha1');
+  hash.update(headSha);
+  hash.update('\0');
+  hash.update(status.stdout);
+  // Content changes to modified/untracked files don't always alter porcelain
+  // output, so fold in the mtimes+sizes of every dirty path.
+  const dirtyPaths: string[] = [];
+  for (const entry of status.stdout.toString('utf8').split('\0')) {
+    if (entry.length > 3) {
+      dirtyPaths.push(entry.slice(3));
+    }
+  }
+  for (const dirtyPath of dirtyPaths.sort()) {
+    try {
+      const fileStat = await stat(path.join(repoPath, dirtyPath));
+      hash.update(`${dirtyPath}:${fileStat.mtimeMs}:${fileStat.size};`);
+    } catch {
+      hash.update(`${dirtyPath}:gone;`);
+    }
+  }
+  return hash.digest('hex');
 }
 
 // Streams the full review patch: `git diff <merge-base>` (working tree

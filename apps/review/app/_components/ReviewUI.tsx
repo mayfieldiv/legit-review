@@ -163,6 +163,71 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
+
+  // Live updates. `diff-changed` (working tree or HEAD moved) reloads the
+  // diff and restores the scroll position; review state (comments, viewed
+  // marks) is durable on the server, so it survives the reload and is
+  // re-applied during hydration. `state-changed` (e.g. an agent resolved a
+  // comment) just re-fetches and re-applies review state in place.
+  const loadStateRef = useRef(loadState);
+  loadStateRef.current = loadState;
+  const scrollRestoreRef = useRef<number | null>(null);
+  const pendingDiffReloadRef = useRef(false);
+  const reloadDiff = useCallback(() => {
+    if (loadStateRef.current !== 'ready' && loadStateRef.current !== 'error') {
+      // A load is already in flight; run another pass once it settles so the
+      // final state reflects the latest working tree.
+      pendingDiffReloadRef.current = true;
+      return;
+    }
+    scrollRestoreRef.current = scrollRef.current?.scrollTop ?? null;
+    retryLoad();
+  }, [retryLoad]);
+  useEffect(() => {
+    const params = new URLSearchParams({ repo });
+    const source = new EventSource(`/api/events?${params}`);
+    let debounceTimer: number | undefined;
+    const handleDiffChanged = () => {
+      window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(reloadDiff, 250);
+    };
+    const handleStateChanged = () => {
+      void refreshReviewState();
+    };
+    source.addEventListener('diff-changed', handleDiffChanged);
+    source.addEventListener('state-changed', handleStateChanged);
+    return () => {
+      window.clearTimeout(debounceTimer);
+      source.close();
+    };
+  }, [refreshReviewState, reloadDiff, repo]);
+  useEffect(() => {
+    if (loadState !== 'ready') {
+      return;
+    }
+    if (scrollRestoreRef.current != null) {
+      const top = scrollRestoreRef.current;
+      scrollRestoreRef.current = null;
+      // The viewer remounts on reload; retry until its scroll container
+      // exists and has enough content to take the offset.
+      let attempts = 0;
+      const tryRestore = () => {
+        const container = scrollRef.current;
+        if (container != null && container.scrollHeight > top) {
+          container.scrollTop = top;
+          return;
+        }
+        if (attempts++ < 20) {
+          requestAnimationFrame(tryRestore);
+        }
+      };
+      requestAnimationFrame(tryRestore);
+    }
+    if (pendingDiffReloadRef.current) {
+      pendingDiffReloadRef.current = false;
+      reloadDiff();
+    }
+  }, [loadState, reloadDiff]);
   const handleSelectTreeItem = useCallback((itemId: string) => {
     setFileTreeOverlayOpen(false);
     const viewer = viewerRef.current;

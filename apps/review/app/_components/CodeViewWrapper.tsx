@@ -41,6 +41,7 @@ import {
   isDraftMetadata,
   isSavedAnnotation,
 } from './utils';
+import { FileViewedCheckbox, HunkViewedPill } from './ViewedControls';
 import { cn } from '@/lib/utils';
 
 function getNextItemVersion(item: CodeViewItem<CommentMetadata>): number {
@@ -73,8 +74,11 @@ interface ActiveDraftComment {
 interface CodeViewWrapperProps {
   className?: string;
   diffStyle: 'split' | 'unified';
+  isFileViewed(itemId: string): boolean;
   onCommentDeleted(comment: CodeViewDeletedCommentEvent): void;
   onCommentSaved(comment: CodeViewSavedCommentEvent): void;
+  onToggleFileViewed(itemId: string, viewed: boolean): void;
+  onToggleHunkViewed(itemId: string, hunkHash: string, viewed: boolean): void;
   onToggleResolved(itemId: string, key: string, resolved: boolean): void;
   // Persists a submitted draft to the review store; null means the save
   // failed (the caller surfaces the error) and the draft stays open.
@@ -96,8 +100,11 @@ interface CodeViewWrapperProps {
 export const CodeViewWrapper = memo(function CodeViewWrapper({
   className,
   diffStyle,
+  isFileViewed,
   onCommentDeleted,
   onCommentSaved,
+  onToggleFileViewed,
+  onToggleHunkViewed,
   onToggleResolved,
   persistComment,
   overflow,
@@ -381,6 +388,16 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
         return null;
       }
 
+      if (annotation.metadata.kind === 'hunk-viewed') {
+        const { hunkHash, viewed } = annotation.metadata;
+        return (
+          <HunkViewedPill
+            viewed={viewed}
+            onToggle={() => onToggleHunkViewed(item.id, hunkHash, !viewed)}
+          />
+        );
+      }
+
       if (isDraftAnnotation(annotation)) {
         return (
           <DraftAnnotation
@@ -422,6 +439,21 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
           }
           collapsed={item.collapsed}
           onToggle={() => handleToggleItemCollapsed(item.id)}
+        />
+      );
+    }
+  );
+
+  const renderHeaderMetadata = useStableCallback(
+    (item: CodeViewItem<CommentMetadata>) => {
+      if (item.type !== 'diff') {
+        return null;
+      }
+
+      return (
+        <FileViewedCheckbox
+          viewed={isFileViewed(item.id)}
+          onToggle={(viewed) => onToggleFileViewed(item.id, viewed)}
         />
       );
     }
@@ -483,6 +515,7 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
       selectedLines={selectedLines}
       onSelectedLinesChange={handleSetSelection}
       renderAnnotation={renderCommentAnnotation}
+      renderHeaderMetadata={renderHeaderMetadata}
       renderHeaderPrefix={renderHeaderPrefix}
     />
   );

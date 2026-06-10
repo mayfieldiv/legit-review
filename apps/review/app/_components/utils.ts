@@ -48,6 +48,49 @@ export function isSavedAnnotation(
   return annotation.metadata.kind === 'saved';
 }
 
+// Where a hunk's "Viewed" pill is anchored: the hunk's last rendered line.
+// Pure-deletion hunks have no addition lines, so the pill sits on the
+// deletions side there.
+export function getHunkViewedAnchor(hunk: {
+  additionStart: number;
+  additionCount: number;
+  deletionStart: number;
+  deletionCount: number;
+}): { side: AnnotationSide; lineNumber: number } | undefined {
+  if (hunk.additionCount > 0) {
+    return {
+      side: 'additions',
+      lineNumber: hunk.additionStart + hunk.additionCount - 1,
+    };
+  }
+  if (hunk.deletionCount > 0) {
+    return {
+      side: 'deletions',
+      lineNumber: hunk.deletionStart + hunk.deletionCount - 1,
+    };
+  }
+  return undefined;
+}
+
+// A file counts as viewed when its file-level mark matches the current file
+// hash, or when every hunk in the current diff is individually marked viewed.
+export function computeFileViewed(
+  viewedFiles: Record<string, string>,
+  viewedHunks: Record<string, string[]>,
+  filePath: string,
+  fileHash: string,
+  hunkHashes: readonly string[]
+): boolean {
+  if (viewedFiles[filePath] === fileHash) {
+    return true;
+  }
+  if (hunkHashes.length === 0) {
+    return false;
+  }
+  const viewed = new Set(viewedHunks[filePath] ?? []);
+  return hunkHashes.every((hash) => viewed.has(hash));
+}
+
 // Finds the index of the hunk containing the given 1-based line on a diff
 // side, or -1 when no hunk covers it. Used to attach the containing hunk's
 // content hash to new comments so they can be flagged outdated later.

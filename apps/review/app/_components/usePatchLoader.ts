@@ -50,7 +50,12 @@ import type {
   SavedCommentMetadata,
   ViewerLoadState,
 } from './types';
-import { classifyCommentLineType, isDraftAnnotation } from './utils';
+import {
+  classifyCommentLineType,
+  computeFileViewed,
+  getHunkViewedAnchor,
+  isDraftAnnotation,
+} from './utils';
 import {
   type FileHunkHashes,
   hashFileBlock,
@@ -80,6 +85,7 @@ interface UsePatchLoaderResult {
   errorMessage: string | null;
   getFileHunkHashes(filePath: string): FileHunkHashes | undefined;
   initialItems: CodeViewItem<CommentMetadata>[];
+  isFileViewed(itemId: string): boolean;
   loadState: ViewerLoadState;
   onLineLinkChange(selection: CodeViewLineSelection | null): void;
   onViewerReady(): void;
@@ -136,6 +142,13 @@ export function usePatchLoader({
   // file path. Computed from the raw patch text with the same code the server
   // uses, so viewed marks and comment hunk anchors agree across both sides.
   const fileHashesByPathRef = useRef<Map<string, FileHunkHashes>>(new Map());
+  // Mirror of the latest server review state for synchronous reads from
+  // render-time callbacks (e.g. the header Viewed checkbox).
+  const reviewStateRef = useRef<ReviewStateResponse | null>(null);
+  // Last viewed-state applied to each item's `collapsed` flag. Refreshes only
+  // touch collapse when the viewed state actually changed, so a manual
+  // expand of a viewed file survives unrelated state updates.
+  const lastAppliedViewedByItemIdRef = useRef<Map<string, boolean>>(new Map());
   // Mirrors the latest collapse mode so the streaming code path (which lives
   // inside a long-lived effect/closure) can read the live value without us
   // having to re-bind it on every change.
@@ -203,13 +216,15 @@ export function usePatchLoader({
     }
   );
 
-  // Projects stored comments onto the loaded items as saved annotations and
-  // rebuilds the sidebar sections. Server state replaces all saved
-  // annotations while open drafts are preserved, so this is idempotent and
-  // doubles as the refresh path when an agent mutates comments. Comments on
+  // Projects stored review state onto the loaded items: saved comment
+  // annotations, per-hunk Viewed pills, sidebar sections, and viewed-driven
+  // collapse. Server state replaces all synthetic annotations while open
+  // drafts are preserved, so this is idempotent and doubles as the refresh
+  // path when an agent mutates comments or the diff is reloaded. Comments on
   // files that left the diff get an orphan sidebar section (no annotation).
-  const applyServerComments = useStableCallback(
-    (comments: readonly ReviewStateComment[]): void => {
+  const applyServerState = useStableCallback(
+    (state: ReviewStateResponse): void => {
+      const comments: readonly ReviewStateComment[] = state.comments;
       const itemsByPath = new Map<string, CodeViewItem<CommentMetadata>>();
       const orderByItemId = new Map<string, number>();
       let order = 0;
@@ -296,16 +311,58 @@ export function usePatchLoader({
         if (item.type !== 'diff') {
           continue;
         }
-        const serverAnnotations = annotationsByItemId.get(item.id) ?? [];
-        const hasSavedAnnotations =
-          item.annotations?.some(
-            (annotation) => annotation.metadata.kind === 'saved'
-          ) === true;
-        if (serverAnnotations.length === 0 && !hasSavedAnnotations) {
-          continue;
+        const filePath = item.fileDiff.name;
+        const fileHashes = fileHashesByPathRef.current.get(filePath);
+
+        // Per-hunk Viewed pills, anchored to each hunk's last line.
+        const viewedHunkSet = new Set(state.viewedHunks[filePath] ?? []);
+        const pillAnnotations: DiffLineAnnotation<CommentMetadata>[] = [];
+        if (fileHashes != null) {
+          for (const [hunkIndex, hunk] of item.fileDiff.hunks.entries()) {
+            const hunkHash = fileHashes.hunkHashes[hunkIndex];
+            const anchor = getHunkViewedAnchor(hunk);
+            if (hunkHash == null || anchor == null) {
+              continue;
+            }
+            pillAnnotations.push({
+              side: anchor.side,
+              lineNumber: anchor.lineNumber,
+              metadata: {
+                kind: 'hunk-viewed',
+                key: `hunk-viewed:${item.id}:${hunkIndex}`,
+                hunkHash,
+                viewed: viewedHunkSet.has(hunkHash),
+              },
+            });
+          }
         }
+
+        const serverAnnotations = annotationsByItemId.get(item.id) ?? [];
         const drafts = (item.annotations ?? []).filter(isDraftAnnotation);
-        item.annotations = [...drafts, ...serverAnnotations];
+        item.annotations = [
+          ...drafts,
+          ...pillAnnotations,
+          ...serverAnnotations,
+        ];
+
+        // Viewed files stay collapsed. Only touch `collapsed` when the
+        // viewed state changed so manual expand/collapse survives unrelated
+        // refreshes.
+        if (fileHashes != null) {
+          const fileViewed = computeFileViewed(
+            state.viewedFiles,
+            state.viewedHunks,
+            filePath,
+            fileHashes.fileHash,
+            fileHashes.hunkHashes
+          );
+          const lastApplied = lastAppliedViewedByItemIdRef.current.get(item.id);
+          if (lastApplied !== fileViewed) {
+            lastAppliedViewedByItemIdRef.current.set(item.id, fileViewed);
+            item.collapsed = fileViewed;
+          }
+        }
+
         item.version = getNextItemVersion(item);
         viewer?.updateItem(item);
       }
@@ -315,6 +372,27 @@ export function usePatchLoader({
       );
     }
   );
+
+  // Whether an item's file currently counts as viewed (file-level mark or
+  // all hunks marked). Read at render time by the header Viewed checkbox.
+  const isFileViewed = useStableCallback((itemId: string): boolean => {
+    const state = reviewStateRef.current;
+    const item = loadedItemsByIdRef.current.get(itemId);
+    if (state == null || item == null || item.type !== 'diff') {
+      return false;
+    }
+    const fileHashes = fileHashesByPathRef.current.get(item.fileDiff.name);
+    if (fileHashes == null) {
+      return false;
+    }
+    return computeFileViewed(
+      state.viewedFiles,
+      state.viewedHunks,
+      item.fileDiff.name,
+      fileHashes.fileHash,
+      fileHashes.hunkHashes
+    );
+  });
 
   // Fetches persisted review state for the loaded repo and applies it.
   const hydrateReviewState = useStableCallback(async (): Promise<void> => {
@@ -336,8 +414,9 @@ export function usePatchLoader({
     if (requestIdRef.current !== requestId) {
       return;
     }
+    reviewStateRef.current = state;
     setReviewState(state);
-    applyServerComments(state.comments);
+    applyServerState(state);
   });
 
   const getFileHunkHashes = useStableCallback(
@@ -395,6 +474,8 @@ export function usePatchLoader({
     appliedLineHashKeyRef.current = null;
     loadedItemsByIdRef.current = new Map();
     fileHashesByPathRef.current = new Map();
+    reviewStateRef.current = null;
+    lastAppliedViewedByItemIdRef.current = new Map();
     setReviewState(null);
     setViewerKey(requestId);
     setInitialItems([]);
@@ -712,6 +793,7 @@ export function usePatchLoader({
     errorMessage,
     getFileHunkHashes,
     initialItems,
+    isFileViewed,
     loadState,
     onLineLinkChange: handleLineLinkChange,
     onViewerReady: tryApplyLineHashTarget,

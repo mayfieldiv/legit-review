@@ -131,6 +131,7 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
     errorMessage,
     getFileHunkHashes,
     initialItems,
+    isFileViewed,
     loadState,
     onLineLinkChange,
     onViewerReady,
@@ -283,6 +284,71 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
     },
     [refreshReviewState, repo]
   );
+  // Sends a viewed-mark mutation and re-applies server state (which drives
+  // pill states and viewed-collapse).
+  const putViewedMarks = useCallback(
+    async (body: Record<string, unknown>) => {
+      try {
+        const params = new URLSearchParams({ repo });
+        const response = await fetch(`/api/viewed?${params}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!response.ok) {
+          throw new Error((await response.text()).trim());
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof Error && error.message !== ''
+            ? error.message
+            : 'Failed to update viewed state.'
+        );
+      }
+      await refreshReviewState();
+    },
+    [refreshReviewState, repo]
+  );
+  const handleToggleHunkViewed = useCallback(
+    (itemId: string, hunkHash: string, viewed: boolean) => {
+      const file = commentFileByItemId?.get(itemId);
+      if (file == null) {
+        return;
+      }
+      void putViewedMarks({
+        filePath: file.path,
+        viewed,
+        hunkHashes: [hunkHash],
+      });
+    },
+    [commentFileByItemId, putViewedMarks]
+  );
+  const handleToggleFileViewed = useCallback(
+    (itemId: string, viewed: boolean) => {
+      const file = commentFileByItemId?.get(itemId);
+      const hashes = file == null ? undefined : getFileHunkHashes(file.path);
+      if (file == null || hashes == null) {
+        return;
+      }
+      void (async () => {
+        // Marking the file also marks all its hunks so the pills agree;
+        // clearing does the reverse.
+        if (hashes.hunkHashes.length > 0) {
+          await putViewedMarks({
+            filePath: file.path,
+            viewed,
+            hunkHashes: hashes.hunkHashes,
+          });
+        }
+        await putViewedMarks(
+          viewed
+            ? { filePath: file.path, viewed, fileHash: hashes.fileHash }
+            : { filePath: file.path, viewed }
+        );
+      })();
+    },
+    [commentFileByItemId, getFileHunkHashes, putViewedMarks]
+  );
   const handleCommentDeleted = useCallback(
     (comment: CodeViewDeletedCommentEvent) => {
       // The viewer already removed the annotation optimistically.
@@ -396,9 +462,12 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
             themeType={colorMode}
             viewerRef={viewerRef}
             initialItems={initialItems}
+            isFileViewed={isFileViewed}
             onCommentDeleted={handleCommentDeleted}
             onCommentSaved={handleCommentSaved}
             onLineLinkChange={onLineLinkChange}
+            onToggleFileViewed={handleToggleFileViewed}
+            onToggleHunkViewed={handleToggleHunkViewed}
             onToggleResolved={handleToggleResolved}
             onViewerReady={onViewerReady}
             persistComment={persistComment}

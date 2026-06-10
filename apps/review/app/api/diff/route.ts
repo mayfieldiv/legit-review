@@ -1,25 +1,47 @@
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
+import {
+  createLocalDiffStream,
+  GitRequestError,
+  resolveLocalDiffSource,
+} from '@/lib/git';
 
-// Placeholder diff source: serves the bundled fixture patch so the viewer has
-// something to render before the local `git diff` source lands. The response
-// contract (streamable text/plain unified diff, no-store) matches what
-// usePatchLoader expects and what the git-backed route will provide.
-export async function GET() {
-  const fixturePath = path.join(process.cwd(), 'fixtures', 'sample.diff');
+// Streams the local review patch for ?repo=<abs path>[&base=<ref>]: the
+// tracked diff against merge-base(base, HEAD) plus synthesized patches for
+// untracked files. Source metadata rides along in X-Review-* headers
+// (URI-encoded so non-ASCII repo paths and branch names survive HTTP).
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const repo = url.searchParams.get('repo');
+  const base = url.searchParams.get('base');
 
-  let patchText: string;
+  if (repo == null || repo === '') {
+    return createTextResponse('repo query parameter is required', {
+      status: 400,
+    });
+  }
+
+  let source;
   try {
-    patchText = await readFile(fixturePath, 'utf8');
-  } catch {
-    return createTextResponse('Fixture patch not found.', { status: 500 });
+    source = await resolveLocalDiffSource(repo, base);
+  } catch (error) {
+    if (error instanceof GitRequestError) {
+      return createTextResponse(error.message, { status: error.status });
+    }
+    return createTextResponse(
+      error instanceof Error ? error.message : 'Unknown error',
+      { status: 500 }
+    );
   }
 
-  if (patchText.trim() === '') {
-    return createTextResponse('Fixture patch is empty.', { status: 422 });
-  }
-
-  return createTextResponse(patchText);
+  return new Response(createLocalDiffStream(source), {
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      // Never cached: the working tree changes constantly.
+      'Cache-Control': 'no-store',
+      'X-Review-Repo': encodeURIComponent(source.repoPath),
+      'X-Review-Branch': encodeURIComponent(source.branch),
+      'X-Review-Base': encodeURIComponent(source.baseRef),
+    },
+  });
 }
 
 function createTextResponse(
@@ -30,8 +52,6 @@ function createTextResponse(
     status,
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
-      // Diff responses are intentionally not cached so a refreshed page always
-      // reflects the latest content from the source.
       'Cache-Control': 'no-store',
     },
   });

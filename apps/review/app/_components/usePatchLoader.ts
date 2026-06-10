@@ -42,6 +42,7 @@ import type {
   CodeViewFileTreeSource,
   CodeViewSavedCommentItem,
   CommentMetadata,
+  ReviewSourceInfo,
   ViewerLoadState,
 } from './types';
 
@@ -53,9 +54,10 @@ const STREAM_TREE_PUBLISH_INTERVAL_MS = 1_000;
 const GENERIC_PATCH_LOAD_ERROR_MESSAGE = 'We couldn’t load that diff.';
 
 interface UsePatchLoaderOptions {
+  base?: string;
   collapseMode: 'expanded' | 'collapsed';
   onLoadStart(): void;
-  path: string;
+  repo: string;
   viewerRef: RefObject<CodeViewHandle<CommentMetadata> | null>;
 }
 
@@ -71,14 +73,16 @@ interface UsePatchLoaderResult {
   onViewerReady(): void;
   retryLoad(): void;
   setCommentSections: Dispatch<SetStateAction<CodeViewSavedCommentItem[]>>;
+  sourceInfo: ReviewSourceInfo | null;
   treeSource: CodeViewFileTreeSource | null;
   viewerKey: number;
 }
 
 export function usePatchLoader({
+  base,
   collapseMode,
   onLoadStart,
-  path,
+  repo,
   viewerRef,
 }: UsePatchLoaderOptions): UsePatchLoaderResult {
   const [initialItems, setInitialItems] = useState<
@@ -97,6 +101,7 @@ export function usePatchLoader({
     CodeViewSavedCommentItem[]
   >([]);
   const [loadState, setLoadState] = useState<ViewerLoadState>('fetching');
+  const [sourceInfo, setSourceInfo] = useState<ReviewSourceInfo | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [viewerKey, setViewerKey] = useState(0);
@@ -209,8 +214,11 @@ export function usePatchLoader({
   );
 
   useEffect(() => {
-    const patchRequestKey = path;
-    const patchSearchParams = new URLSearchParams({ path });
+    const patchRequestKey = base == null ? repo : `${repo}@${base}`;
+    const patchSearchParams = new URLSearchParams({ repo });
+    if (base != null && base !== '') {
+      patchSearchParams.set('base', base);
+    }
 
     const controller = new AbortController();
     const requestId = ++requestIdRef.current;
@@ -226,6 +234,7 @@ export function usePatchLoader({
     setDiffStats(null);
     setCommentFileByItemId(null);
     setCommentSections([]);
+    setSourceInfo(null);
     onLoadStart();
     setErrorMessage(null);
     setLoadState('fetching');
@@ -276,6 +285,10 @@ export function usePatchLoader({
           throw new Error(
             detail.length > 0 ? detail : `Request failed (${response.status}).`
           );
+        }
+
+        if (isCurrentRequest()) {
+          setSourceInfo(parseReviewSourceInfo(response.headers));
         }
 
         if (response.body == null) {
@@ -469,7 +482,13 @@ export function usePatchLoader({
           return;
         }
         console.warn('Failed to load diff', error);
-        setErrorMessage(GENERIC_PATCH_LOAD_ERROR_MESSAGE);
+        // Local diff failures carry actionable detail (bad path, missing
+        // base ref, not a repo), so surface them instead of a generic line.
+        setErrorMessage(
+          error instanceof Error && error.message !== ''
+            ? error.message
+            : GENERIC_PATCH_LOAD_ERROR_MESSAGE
+        );
         setLoadState('error');
       }
     }
@@ -479,7 +498,7 @@ export function usePatchLoader({
     return () => {
       controller.abort();
     };
-  }, [loadAttempt, onLoadStart, path, tryApplyLineHashTarget, viewerRef]);
+  }, [base, loadAttempt, onLoadStart, repo, tryApplyLineHashTarget, viewerRef]);
 
   useEffect(() => {
     window.addEventListener('hashchange', tryApplyLineHashTarget);
@@ -505,8 +524,23 @@ export function usePatchLoader({
     onViewerReady: tryApplyLineHashTarget,
     retryLoad,
     setCommentSections,
+    sourceInfo,
     treeSource,
     viewerKey,
+  };
+}
+
+function parseReviewSourceInfo(headers: Headers): ReviewSourceInfo | null {
+  const repoPath = headers.get('X-Review-Repo');
+  const branch = headers.get('X-Review-Branch');
+  const baseRef = headers.get('X-Review-Base');
+  if (repoPath == null || branch == null || baseRef == null) {
+    return null;
+  }
+  return {
+    repoPath: decodeURIComponent(repoPath),
+    branch: decodeURIComponent(branch),
+    baseRef: decodeURIComponent(baseRef),
   };
 }
 

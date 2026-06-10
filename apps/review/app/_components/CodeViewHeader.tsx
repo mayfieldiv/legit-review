@@ -31,6 +31,7 @@ import {
 import { diffshubChromeMapping } from './_theming/js/diffshubChromeMapping';
 import { useChromeThemeProps } from './_theming/react/useChromeThemeProps';
 import { DiffsHubLogo } from './DiffsHubLogo';
+import type { ReviewSourceInfo } from './types';
 import { docsThemeCatalog } from '@/components/themeCatalog';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ui/button-group';
@@ -65,6 +66,7 @@ interface HeaderProps {
   overflow: 'wrap' | 'scroll';
   onToggleCollapseMode(): void;
   onToggleFileTreeOverlay(): void;
+  sourceInfo: ReviewSourceInfo | null;
   setColorMode(mode: ColorMode): void;
   setDarkThemeName(name: DarkThemeName): void;
   setDiffIndicators: Dispatch<SetStateAction<DiffIndicators>>;
@@ -90,6 +92,7 @@ export const CodeViewHeader = memo(function CodeViewHeader({
   overflow,
   onToggleCollapseMode,
   onToggleFileTreeOverlay,
+  sourceInfo,
   setColorMode,
   setDarkThemeName,
   setDiffIndicators,
@@ -125,10 +128,32 @@ export const CodeViewHeader = memo(function CodeViewHeader({
     >
       <Link
         href="/"
-        className="absolute top-4 left-[50%] inline-flex -translate-x-1/2 transition-transform duration-200 hover:scale-110 md:static md:mr-auto md:translate-x-0"
+        className="absolute top-4 left-[50%] inline-flex -translate-x-1/2 transition-transform duration-200 hover:scale-110 md:static md:translate-x-0"
       >
         <DiffsHubLogo />
       </Link>
+      <div className="hidden min-w-0 items-baseline gap-2 font-mono text-xs md:mr-auto md:flex">
+        {sourceInfo != null && (
+          <>
+            <span
+              className="truncate"
+              title={`${sourceInfo.branch} against ${sourceInfo.baseRef}`}
+            >
+              {sourceInfo.branch}
+              <span className="text-muted-foreground">
+                {' '}
+                ← {sourceInfo.baseRef}
+              </span>
+            </span>
+            <span
+              className="text-muted-foreground hidden truncate lg:inline"
+              title={sourceInfo.repoPath}
+            >
+              {sourceInfo.repoPath}
+            </span>
+          </>
+        )}
+      </div>
       <div className="flex w-full items-center justify-between gap-2 md:w-auto md:justify-end">
         <Button
           type="button"

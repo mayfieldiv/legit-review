@@ -37,20 +37,21 @@ import {
 } from '@/components/themeController';
 
 interface ReviewUIProps {
-  path: string;
+  base?: string;
+  repo: string;
 }
 
-export function ReviewUI({ path }: ReviewUIProps) {
+export function ReviewUI({ base, repo }: ReviewUIProps) {
   // Provide the app-scoped theme context, then render the body BELOW it so
   // the diffs hook + selection hook can read the controller context.
   return (
     <ThemeProvider controller={themeController}>
-      <ReviewUIInner path={path} />
+      <ReviewUIInner base={base} repo={repo} />
     </ThemeProvider>
   );
 }
 
-function ReviewUIInner({ path }: ReviewUIProps) {
+function ReviewUIInner({ base, repo }: ReviewUIProps) {
   useEffect(preloadAvatars, []);
 
   const isWorkerPoolReadyOrDisable = useIsWorkerPoolReadyOrDisabled();
@@ -132,12 +133,14 @@ function ReviewUIInner({ path }: ReviewUIProps) {
     onViewerReady,
     retryLoad,
     setCommentSections,
+    sourceInfo,
     treeSource,
     viewerKey,
   } = usePatchLoader({
+    base,
     collapseMode,
     onLoadStart: handlePatchLoadStart,
-    path,
+    repo,
     viewerRef,
   });
 
@@ -246,6 +249,7 @@ function ReviewUIInner({ path }: ReviewUIProps) {
         fileTreeAvailable={treeSource != null}
         onToggleCollapseMode={handleToggleCollapseMode}
         onToggleFileTreeOverlay={handleToggleFileTreeOverlay}
+        sourceInfo={sourceInfo}
         setColorMode={setColorMode}
         setDarkThemeName={setDarkThemeName}
         setDiffIndicators={setDiffIndicators}

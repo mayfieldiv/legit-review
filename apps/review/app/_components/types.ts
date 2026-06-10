@@ -8,6 +8,14 @@ export type ViewerLoadState =
   | 'ready'
   | 'error';
 
+// Resolved identity of the local diff being reviewed, parsed from the
+// X-Review-* response headers of /api/diff.
+export interface ReviewSourceInfo {
+  repoPath: string;
+  branch: string;
+  baseRef: string;
+}
+
 export interface SavedCommentMetadata {
   kind: 'saved';
   key: string;

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { open, realpath, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 // Untracked files above this size are emitted as binary-style stubs instead of
@@ -109,19 +110,40 @@ export interface RepoIdentity {
   branch: string;
 }
 
+// Repo paths arrive from a form/query param, not a shell, so `~` is never
+// expanded by the time it reaches us. The server and reviewer are the same
+// local user, so expanding against our own home dir is correct. $HOME is
+// preferred over os.homedir() to match shell semantics (and because Bun
+// caches homedir at startup, which would defeat test overrides).
+function homeDirectory(): string {
+  const home = process.env.HOME;
+  return home != null && home !== '' ? home : os.homedir();
+}
+
+function expandTilde(input: string): string {
+  if (input === '~') {
+    return homeDirectory();
+  }
+  if (input.startsWith('~/')) {
+    return path.join(homeDirectory(), input.slice(2));
+  }
+  return input;
+}
+
 // Resolves user input to the canonical repo toplevel + current branch. Used
 // by every route so review state is keyed consistently no matter which
 // subdirectory or symlinked path the caller passed.
 export async function resolveRepoIdentity(
   repoInput: string
 ): Promise<RepoIdentity> {
-  if (!path.isAbsolute(repoInput)) {
+  const expandedInput = expandTilde(repoInput);
+  if (!path.isAbsolute(expandedInput)) {
     throw new GitRequestError(`Repo path must be absolute: ${repoInput}`);
   }
 
   let realRepoPath: string;
   try {
-    realRepoPath = await realpath(repoInput);
+    realRepoPath = await realpath(expandedInput);
   } catch {
     throw new GitRequestError(`No such directory: ${repoInput}`, 404);
   }

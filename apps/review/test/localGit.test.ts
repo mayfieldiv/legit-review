@@ -56,6 +56,25 @@ describe('resolveLocalDiffSource', () => {
     expect(source.mergeBase).toBe(git(repo, 'rev-parse', 'main'));
   });
 
+  test('expands ~ against the home directory', async () => {
+    const repo = path.join(baseDir, 'tilde');
+    await initRepo(repo);
+    await writeFile(path.join(repo, 'a.txt'), 'one\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'init');
+
+    // os.homedir() reads $HOME on POSIX, so pointing it at the test dir
+    // makes `~/tilde` resolve to the repo above.
+    const previousHome = process.env.HOME;
+    process.env.HOME = baseDir;
+    try {
+      const source = await resolveLocalDiffSource('~/tilde', null);
+      expect(source.repoPath).toBe(repo);
+    } finally {
+      process.env.HOME = previousHome;
+    }
+  });
+
   test('falls back to main when no base is requested', async () => {
     const repo = path.join(baseDir, 'fallback-main');
     await initRepo(repo);

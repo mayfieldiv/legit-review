@@ -9,8 +9,8 @@
     "dev": "export PORT=$((${PIERRE_PORT_OFFSET:-0} + 3693)) && bash ../../scripts/run-dev.sh \"$PORT\" -- bun run _dev",
     "prod": "export PORT=$((${PIERRE_PORT_OFFSET:-0} + 3693)) && bash ../../scripts/run-dev.sh \"$PORT\" -- bun run _prod",
     "_dev": "bun run build:deps && bun concurrently \"bun run dev:deps:diffs\" \"bun run dev:deps:tree\" \"bun run dev:deps:truncate\" \"bun run dev:next\" --names \"diffs,trees,truncate,review\" --prefix-colors \"blue,green,yellow,purple\"",
-    "_prod": "bun run build && next start -p ${PORT:-3000}",
-    "dev:next": "next dev",
+    "_prod": "bun run build && next start -H 127.0.0.1 -p ${PORT:-3000}",
+    "dev:next": "next dev -H 127.0.0.1",
     "dev:deps:diffs": "(cd ../../packages/diffs && bun run dev)",
     "dev:deps:tree": "(cd ../../packages/trees && bun run dev)",
     "dev:deps:truncate": "(cd ../../packages/truncate && bun run dev)",
@@ -39,7 +39,8 @@
     "sonner": "catalog:",
     "tailwind-merge": "catalog:",
     "tailwindcss": "catalog:",
-    "tw-animate-css": "catalog:"
+    "tw-animate-css": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "catalog:",

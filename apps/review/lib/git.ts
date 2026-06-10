@@ -103,10 +103,17 @@ async function resolveBaseRef(
   return 'HEAD';
 }
 
-export async function resolveLocalDiffSource(
-  repoInput: string,
-  baseInput: string | null
-): Promise<LocalDiffSource> {
+export interface RepoIdentity {
+  repoPath: string;
+  branch: string;
+}
+
+// Resolves user input to the canonical repo toplevel + current branch. Used
+// by every route so review state is keyed consistently no matter which
+// subdirectory or symlinked path the caller passed.
+export async function resolveRepoIdentity(
+  repoInput: string
+): Promise<RepoIdentity> {
   if (!path.isAbsolute(repoInput)) {
     throw new GitRequestError(`Repo path must be absolute: ${repoInput}`);
   }
@@ -128,6 +135,17 @@ export async function resolveLocalDiffSource(
 
   // Empty when HEAD is detached; fall back to the literal ref name.
   const branch = await gitText(repoPath, ['branch', '--show-current']);
+  return {
+    repoPath,
+    branch: branch == null || branch === '' ? 'HEAD' : branch,
+  };
+}
+
+export async function resolveLocalDiffSource(
+  repoInput: string,
+  baseInput: string | null
+): Promise<LocalDiffSource> {
+  const { repoPath, branch } = await resolveRepoIdentity(repoInput);
   const baseRef = await resolveBaseRef(repoPath, baseInput);
 
   const headSha = await gitText(repoPath, [
@@ -144,12 +162,7 @@ export async function resolveLocalDiffSource(
       (await gitText(repoPath, ['merge-base', baseRef, 'HEAD'])) ?? headSha;
   }
 
-  return {
-    repoPath,
-    branch: branch == null || branch === '' ? 'HEAD' : branch,
-    baseRef,
-    mergeBase,
-  };
+  return { repoPath, branch, baseRef, mergeBase };
 }
 
 // Streams the full review patch: `git diff <merge-base>` (working tree

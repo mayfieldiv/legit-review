@@ -1,16 +1,19 @@
 'use client';
 
 import type { AnnotationSide } from '@pierre/diffs';
-import { IconConvoFill, IconPlus } from '@pierre/icons';
-import { memo, type MouseEvent } from 'react';
+import { IconCheck, IconConvoFill, IconPlus } from '@pierre/icons';
+import { memo, type MouseEvent, useMemo, useState } from 'react';
 
-import { CommentAuthorAvatar } from './annotation-shared';
+import { CommentAuthorBadge } from './annotation-shared';
 import type {
   CodeViewSavedCommentEntry,
   CodeViewSavedCommentItem,
   CommentLineType,
 } from './types';
+import { ButtonGroup, ButtonGroupItem } from '@/components/ui/button-group';
 import { cn } from '@/lib/utils';
+
+type CommentFilter = 'open' | 'resolved' | 'all';
 
 interface CodeViewCommentsListProps {
   commentSections: readonly CodeViewSavedCommentItem[];
@@ -77,11 +80,51 @@ function handleRowClick(
   run();
 }
 
+function filterSections(
+  sections: readonly CodeViewSavedCommentItem[],
+  filter: CommentFilter
+): CodeViewSavedCommentItem[] {
+  if (filter === 'all') {
+    return [...sections];
+  }
+  const wantResolved = filter === 'resolved';
+  const filtered: CodeViewSavedCommentItem[] = [];
+  for (const section of sections) {
+    const comments = section.comments.filter(
+      (comment) => comment.resolved === wantResolved
+    );
+    if (comments.length > 0) {
+      filtered.push({ ...section, comments });
+    }
+  }
+  return filtered;
+}
+
 export const CodeViewCommentsList = memo(function CodeViewCommentsList({
   commentSections,
   onSelectComment,
   onSelectItem,
 }: CodeViewCommentsListProps) {
+  const [filter, setFilter] = useState<CommentFilter>('open');
+  const { openCount, resolvedCount } = useMemo(() => {
+    let open = 0;
+    let resolved = 0;
+    for (const section of commentSections) {
+      for (const comment of section.comments) {
+        if (comment.resolved) {
+          resolved++;
+        } else {
+          open++;
+        }
+      }
+    }
+    return { openCount: open, resolvedCount: resolved };
+  }, [commentSections]);
+  const visibleSections = useMemo(
+    () => filterSections(commentSections, filter),
+    [commentSections, filter]
+  );
+
   if (commentSections.length === 0) {
     return (
       <div className="text-muted-foreground flex h-full min-h-0 flex-col items-center justify-center gap-2 px-7 text-center text-sm">
@@ -93,7 +136,8 @@ export const CodeViewCommentsList = memo(function CodeViewCommentsList({
             <span className="light:text-white light:bg-[rgb(0,159,255)] inline-flex h-[20px] w-[20px] items-center justify-center rounded-[4px] align-top dark:bg-[rgb(0,159,255)] dark:text-black">
               <IconPlus />
             </span>{' '}
-            button to add fake code comments.
+            button to leave a review comment. Comments persist on disk and an
+            agent can pick them up and resolve them.
           </p>
         </div>
       </div>
@@ -101,82 +145,127 @@ export const CodeViewCommentsList = memo(function CodeViewCommentsList({
   }
 
   return (
-    <div
-      className={cn(
-        'cv-mini-scrollbar',
-        'h-full min-h-0 overflow-auto overscroll-contain pl-3 pb-3 pr-[max(0px,calc(12px-var(--cv-mini-gutter-vertical)))]'
-      )}
-    >
-      {commentSections.map((section) => (
-        <section key={section.itemId}>
-          {onSelectItem != null ? (
-            <button
-              type="button"
-              className="text-muted-foreground hover:text-foreground focus-visible:ring-ring block w-full cursor-pointer p-3 pb-2 text-left text-sm font-medium break-all outline-none focus-visible:ring-2"
-              onClick={(event) =>
-                handleRowClick(event, () => onSelectItem(section.itemId))
-              }
-            >
-              <span className="select-text">{section.path}</span>
-            </button>
-          ) : (
-            <div className="text-muted-foreground p-3 pb-2 text-sm font-medium break-all">
-              {section.path}
-            </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="px-3 pb-2">
+        <ButtonGroup
+          aria-label="Filter comments"
+          className="w-full"
+          value={filter}
+          onValueChange={(value) => setFilter(value as CommentFilter)}
+        >
+          <ButtonGroupItem value="open" className="flex-1 text-xs">
+            Open {openCount > 0 ? `(${openCount})` : ''}
+          </ButtonGroupItem>
+          <ButtonGroupItem value="resolved" className="flex-1 text-xs">
+            Resolved {resolvedCount > 0 ? `(${resolvedCount})` : ''}
+          </ButtonGroupItem>
+          <ButtonGroupItem value="all" className="flex-1 text-xs">
+            All
+          </ButtonGroupItem>
+        </ButtonGroup>
+      </div>
+      {visibleSections.length === 0 ? (
+        <div className="text-muted-foreground flex flex-1 items-center justify-center px-7 text-center text-sm">
+          No {filter === 'open' ? 'open' : 'resolved'} comments.
+        </div>
+      ) : (
+        <div
+          className={cn(
+            'cv-mini-scrollbar',
+            'min-h-0 flex-1 overflow-auto overscroll-contain pl-3 pb-3 pr-[max(0px,calc(12px-var(--cv-mini-gutter-vertical)))]'
           )}
-          <div className="rounded-lg border border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
-            {section.comments.map((comment) => (
-              <button
-                key={comment.key}
-                type="button"
-                // Card surface, hover, and border come from the themed
-                // chrome (set on the sidebar wrapper) so cards stay
-                // on-palette for mixed-light/dark themes like slack-ochin
-                // (light-typed but uses a dark navy sidebar). The
-                // hardcoded fallbacks cover the brief window before the
-                // Shiki theme resolves on first render.
-                // No `transition-colors` here: the bg / border / text
-                // colors are driven by CSS variables that flip the entire
-                // chrome on every theme swap, so a smooth color transition
-                // on each card visibly trails the rest of the UI (header,
-                // file tree, diff body) which snap instantly. Hover bg is
-                // snappy enough without an interpolated transition.
-                className="focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-left text-sm outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]"
-                onClick={(event) =>
-                  handleRowClick(event, () => onSelectComment?.(comment))
-                }
-              >
-                <CommentAuthorAvatar seed={comment.author} className="size-5" />
-                <div className="flex flex-col gap-0.5 select-text">
-                  <div className="flex gap-2">
-                    <span className="text-muted-foreground">
-                      {comment.author} commented on{' '}
-                      <span
+        >
+          {visibleSections.map((section) => (
+            <section key={section.itemId}>
+              {onSelectItem != null ? (
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground focus-visible:ring-ring block w-full cursor-pointer p-3 pb-2 text-left text-sm font-medium break-all outline-none focus-visible:ring-2"
+                  onClick={(event) =>
+                    handleRowClick(event, () => onSelectItem(section.itemId))
+                  }
+                >
+                  <span className="select-text">{section.path}</span>
+                </button>
+              ) : (
+                <div className="text-muted-foreground p-3 pb-2 text-sm font-medium break-all">
+                  {section.path}
+                </div>
+              )}
+              <div className="rounded-lg border border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
+                {section.comments.map((comment) => (
+                  <button
+                    key={comment.key}
+                    type="button"
+                    // Card surface, hover, and border come from the themed
+                    // chrome (set on the sidebar wrapper) so cards stay
+                    // on-palette for mixed-light/dark themes like slack-ochin
+                    // (light-typed but uses a dark navy sidebar). The
+                    // hardcoded fallbacks cover the brief window before the
+                    // Shiki theme resolves on first render.
+                    // No `transition-colors` here: the bg / border / text
+                    // colors are driven by CSS variables that flip the entire
+                    // chrome on every theme swap, so a smooth color transition
+                    // on each card visibly trails the rest of the UI (header,
+                    // file tree, diff body) which snap instantly. Hover bg is
+                    // snappy enough without an interpolated transition.
+                    className="focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-left text-sm outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]"
+                    onClick={(event) =>
+                      handleRowClick(event, () => onSelectComment?.(comment))
+                    }
+                  >
+                    <CommentAuthorBadge
+                      author={comment.author}
+                      className="size-5 text-[10px]"
+                    />
+                    <div className="flex flex-col gap-0.5 select-text">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-muted-foreground">
+                          {comment.author} commented on{' '}
+                          <span
+                            className={cn(
+                              getCommentLineClassName(
+                                comment.side,
+                                comment.lineType
+                              ),
+                              'font-medium'
+                            )}
+                          >
+                            {getCommentLineLabel(
+                              comment.side,
+                              comment.lineNumber,
+                              comment.lineType
+                            )}
+                          </span>
+                        </span>
+                        {comment.resolved && (
+                          <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-600/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                            <IconCheck size={9} />
+                            Resolved
+                          </span>
+                        )}
+                        {comment.outdated && (
+                          <span className="inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                            Outdated
+                          </span>
+                        )}
+                      </div>
+                      <p
                         className={cn(
-                          getCommentLineClassName(
-                            comment.side,
-                            comment.lineType
-                          ),
-                          'font-medium'
+                          'text-foreground w-full break-words whitespace-pre-wrap',
+                          comment.resolved && 'opacity-60'
                         )}
                       >
-                        {getCommentLineLabel(
-                          comment.side,
-                          comment.lineNumber,
-                          comment.lineType
-                        )}
-                      </span>
-                    </span>
-                  </div>
-                  <p className="text-foreground w-full break-words whitespace-pre-wrap">
-                    {comment.message}
-                  </p>
-                </div>
-              </button>
-            ))}
-          </div>
-        </section>
-      ))}
+                        {comment.message}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   );
 });

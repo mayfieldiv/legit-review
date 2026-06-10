@@ -4,6 +4,7 @@ import {
   areSelectionsEqual,
   type CodeViewItem,
   type CodeViewLineSelection,
+  type DiffLineAnnotation,
   processFile,
 } from '@pierre/diffs';
 import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
@@ -40,11 +41,21 @@ import type {
   CodeViewCommentFileByItemId,
   CodeViewDiffStats,
   CodeViewFileTreeSource,
+  CodeViewSavedCommentEntry,
   CodeViewSavedCommentItem,
   CommentMetadata,
   ReviewSourceInfo,
+  ReviewStateComment,
+  ReviewStateResponse,
+  SavedCommentMetadata,
   ViewerLoadState,
 } from './types';
+import { classifyCommentLineType, isDraftAnnotation } from './utils';
+import {
+  type FileHunkHashes,
+  hashFileBlock,
+  hashPatchFiles,
+} from '@/lib/hunkHash';
 
 const STREAM_PUBLISH_INTERVAL_MS = 100;
 const STREAM_INITIAL_PUBLISH_INTERVAL_MS = 500;
@@ -67,11 +78,14 @@ interface UsePatchLoaderResult {
   commentSections: CodeViewSavedCommentItem[];
   diffStats: CodeViewDiffStats | null;
   errorMessage: string | null;
+  getFileHunkHashes(filePath: string): FileHunkHashes | undefined;
   initialItems: CodeViewItem<CommentMetadata>[];
   loadState: ViewerLoadState;
   onLineLinkChange(selection: CodeViewLineSelection | null): void;
   onViewerReady(): void;
+  refreshReviewState(): Promise<void>;
   retryLoad(): void;
+  reviewState: ReviewStateResponse | null;
   setCommentSections: Dispatch<SetStateAction<CodeViewSavedCommentItem[]>>;
   sourceInfo: ReviewSourceInfo | null;
   treeSource: CodeViewFileTreeSource | null;
@@ -102,16 +116,26 @@ export function usePatchLoader({
   >([]);
   const [loadState, setLoadState] = useState<ViewerLoadState>('fetching');
   const [sourceInfo, setSourceInfo] = useState<ReviewSourceInfo | null>(null);
+  const [reviewState, setReviewState] = useState<ReviewStateResponse | null>(
+    null
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [viewerKey, setViewerKey] = useState(0);
   const requestIdRef = useRef(0);
   const appliedLineHashKeyRef = useRef<string | null>(null);
   const viewerKeyRef = useRef(0);
-  // Tracks the ids of every item that has been handed to the viewer so we can
-  // walk the full set when the user toggles collapse mode. The viewer handle
-  // does not expose an enumeration API, so we maintain our own index.
-  const loadedItemIdsRef = useRef<Set<string>>(new Set());
+  // Tracks every item handed to the viewer (the same mutable objects the
+  // viewer renders) so collapse-mode toggles and review-state hydration can
+  // walk the full set whether or not the viewer has mounted yet. The viewer
+  // handle does not expose an enumeration API, so we maintain our own index.
+  const loadedItemsByIdRef = useRef<Map<string, CodeViewItem<CommentMetadata>>>(
+    new Map()
+  );
+  // Per-file hunk/file content hashes for the currently loaded diff, keyed by
+  // file path. Computed from the raw patch text with the same code the server
+  // uses, so viewed marks and comment hunk anchors agree across both sides.
+  const fileHashesByPathRef = useRef<Map<string, FileHunkHashes>>(new Map());
   // Mirrors the latest collapse mode so the streaming code path (which lives
   // inside a long-lived effect/closure) can read the live value without us
   // having to re-bind it on every change.
@@ -129,7 +153,7 @@ export function usePatchLoader({
   ): void => {
     const targetCollapsed = collapseModeRef.current === 'collapsed';
     for (const item of items) {
-      loadedItemIdsRef.current.add(item.id);
+      loadedItemsByIdRef.current.set(item.id, item);
       if (item.type === 'diff') {
         item.collapsed = targetCollapsed;
       }
@@ -163,7 +187,7 @@ export function usePatchLoader({
         return;
       }
 
-      for (const itemId of loadedItemIdsRef.current) {
+      for (const itemId of loadedItemsByIdRef.current.keys()) {
         const item = viewer.getItem(itemId);
         if (item == null || item.type !== 'diff') {
           continue;
@@ -177,6 +201,148 @@ export function usePatchLoader({
         viewer.updateItem(item);
       }
     }
+  );
+
+  // Projects stored comments onto the loaded items as saved annotations and
+  // rebuilds the sidebar sections. Server state replaces all saved
+  // annotations while open drafts are preserved, so this is idempotent and
+  // doubles as the refresh path when an agent mutates comments. Comments on
+  // files that left the diff get an orphan sidebar section (no annotation).
+  const applyServerComments = useStableCallback(
+    (comments: readonly ReviewStateComment[]): void => {
+      const itemsByPath = new Map<string, CodeViewItem<CommentMetadata>>();
+      const orderByItemId = new Map<string, number>();
+      let order = 0;
+      for (const item of loadedItemsByIdRef.current.values()) {
+        orderByItemId.set(item.id, order++);
+        if (item.type === 'diff') {
+          itemsByPath.set(item.fileDiff.name, item);
+        }
+      }
+
+      const annotationsByItemId = new Map<
+        string,
+        DiffLineAnnotation<CommentMetadata>[]
+      >();
+      const sectionsByPath = new Map<string, CodeViewSavedCommentItem>();
+      const sortedComments = [...comments].sort(
+        (a, b) => a.range.end - b.range.end
+      );
+      for (const comment of sortedComments) {
+        const item = itemsByPath.get(comment.filePath);
+        const fileHashes = fileHashesByPathRef.current.get(comment.filePath);
+        // A comment is outdated when its anchor hunk's content hash no longer
+        // exists in the current diff (including the file leaving the diff
+        // entirely). Comments without a recorded hash can't be checked.
+        const outdated =
+          fileHashes == null ||
+          (comment.hunkHash !== '' &&
+            !fileHashes.hunkHashes.includes(comment.hunkHash));
+        const metadata: SavedCommentMetadata = {
+          kind: 'saved',
+          key: comment.id,
+          author: comment.author,
+          message: comment.message,
+          range: comment.range,
+          resolved: comment.resolved,
+          resolvedBy: comment.resolvedBy,
+          resolutionNote: comment.resolutionNote,
+          outdated,
+        };
+        const itemId = item?.id ?? `missing:${comment.filePath}`;
+        if (item != null && item.type === 'diff') {
+          const annotations = annotationsByItemId.get(item.id) ?? [];
+          annotations.push({
+            side: comment.side,
+            lineNumber: comment.range.end,
+            metadata,
+          });
+          annotationsByItemId.set(item.id, annotations);
+        }
+        const entry: CodeViewSavedCommentEntry = {
+          author: comment.author,
+          itemId,
+          key: comment.id,
+          lineNumber: comment.range.end,
+          lineType:
+            item != null && item.type === 'diff'
+              ? classifyCommentLineType(
+                  item.fileDiff,
+                  comment.side,
+                  comment.range.end
+                )
+              : 'change',
+          message: comment.message,
+          outdated,
+          range: comment.range,
+          resolved: comment.resolved,
+          side: comment.side,
+        };
+        const section = sectionsByPath.get(comment.filePath);
+        if (section == null) {
+          sectionsByPath.set(comment.filePath, {
+            comments: [entry],
+            fileOrder: orderByItemId.get(itemId) ?? Number.MAX_SAFE_INTEGER,
+            itemId,
+            path: comment.filePath,
+          });
+        } else {
+          section.comments.push(entry);
+        }
+      }
+
+      const viewer = viewerRef.current;
+      for (const item of loadedItemsByIdRef.current.values()) {
+        if (item.type !== 'diff') {
+          continue;
+        }
+        const serverAnnotations = annotationsByItemId.get(item.id) ?? [];
+        const hasSavedAnnotations =
+          item.annotations?.some(
+            (annotation) => annotation.metadata.kind === 'saved'
+          ) === true;
+        if (serverAnnotations.length === 0 && !hasSavedAnnotations) {
+          continue;
+        }
+        const drafts = (item.annotations ?? []).filter(isDraftAnnotation);
+        item.annotations = [...drafts, ...serverAnnotations];
+        item.version = getNextItemVersion(item);
+        viewer?.updateItem(item);
+      }
+
+      setCommentSections(
+        [...sectionsByPath.values()].sort((a, b) => a.fileOrder - b.fileOrder)
+      );
+    }
+  );
+
+  // Fetches persisted review state for the loaded repo and applies it.
+  const hydrateReviewState = useStableCallback(async (): Promise<void> => {
+    const requestId = requestIdRef.current;
+    let state: ReviewStateResponse;
+    try {
+      const response = await fetch(
+        `/api/state?${new URLSearchParams({ repo })}`,
+        { cache: 'no-store' }
+      );
+      if (!response.ok) {
+        throw new Error((await response.text()).trim());
+      }
+      state = (await response.json()) as ReviewStateResponse;
+    } catch (error) {
+      console.warn('Failed to load review state', error);
+      return;
+    }
+    if (requestIdRef.current !== requestId) {
+      return;
+    }
+    setReviewState(state);
+    applyServerComments(state.comments);
+  });
+
+  const getFileHunkHashes = useStableCallback(
+    (filePath: string): FileHunkHashes | undefined =>
+      fileHashesByPathRef.current.get(filePath)
   );
 
   const tryApplyLineHashTarget = useStableCallback(() => {
@@ -227,7 +393,9 @@ export function usePatchLoader({
 
     viewerKeyRef.current = requestId;
     appliedLineHashKeyRef.current = null;
-    loadedItemIdsRef.current = new Set();
+    loadedItemsByIdRef.current = new Map();
+    fileHashesByPathRef.current = new Map();
+    setReviewState(null);
     setViewerKey(requestId);
     setInitialItems([]);
     setTreeSource(null);
@@ -253,8 +421,12 @@ export function usePatchLoader({
             return;
           }
           const loadedData = buildCodeViewData(patchContent, patchRequestKey);
+          const fileHashes = await hashPatchFiles(patchContent);
           if (!isCurrentRequest()) {
             return;
+          }
+          for (const entry of fileHashes) {
+            fileHashesByPathRef.current.set(entry.filePath, entry);
           }
 
           setTreeSource(loadedData.treeSource);
@@ -264,6 +436,7 @@ export function usePatchLoader({
           prepareItemsForViewer(loadedData.items);
           setInitialItems(loadedData.items);
           setLoadState('ready');
+          await hydrateReviewState();
           await yieldToBrowser();
           if (isCurrentRequest()) {
             tryApplyLineHashTarget();
@@ -429,6 +602,12 @@ export function usePatchLoader({
             return;
           }
 
+          const fileHashes = await hashFileBlock(fileText);
+          fileHashesByPathRef.current.set(fileHashes.filePath, fileHashes);
+          if (fileDiff.name !== fileHashes.filePath) {
+            fileHashesByPathRef.current.set(fileDiff.name, fileHashes);
+          }
+
           const itemIdRename = appendFileDiffToCodeViewData(
             accumulator,
             fileDiff,
@@ -436,8 +615,12 @@ export function usePatchLoader({
           );
           if (itemIdRename != null) {
             applyCodeViewItemIdRename(viewerRef.current, itemIdRename);
-            if (loadedItemIdsRef.current.delete(itemIdRename.oldId)) {
-              loadedItemIdsRef.current.add(itemIdRename.newId);
+            const renamedItem = loadedItemsByIdRef.current.get(
+              itemIdRename.oldId
+            );
+            if (renamedItem != null) {
+              loadedItemsByIdRef.current.delete(itemIdRename.oldId);
+              loadedItemsByIdRef.current.set(itemIdRename.newId, renamedItem);
             }
           }
           pendingPublishFileCount++;
@@ -477,6 +660,7 @@ export function usePatchLoader({
         setCommentFileByItemId(new Map(accumulator.itemIdToFile));
         setDiffStats({ ...accumulator.diffStats });
         setLoadState('ready');
+        await hydrateReviewState();
       } catch (error) {
         if (!isCurrentRequest()) {
           return;
@@ -498,7 +682,15 @@ export function usePatchLoader({
     return () => {
       controller.abort();
     };
-  }, [base, loadAttempt, onLoadStart, repo, tryApplyLineHashTarget, viewerRef]);
+  }, [
+    base,
+    hydrateReviewState,
+    loadAttempt,
+    onLoadStart,
+    repo,
+    tryApplyLineHashTarget,
+    viewerRef,
+  ]);
 
   useEffect(() => {
     window.addEventListener('hashchange', tryApplyLineHashTarget);
@@ -518,11 +710,14 @@ export function usePatchLoader({
     commentSections,
     diffStats,
     errorMessage,
+    getFileHunkHashes,
     initialItems,
     loadState,
     onLineLinkChange: handleLineLinkChange,
     onViewerReady: tryApplyLineHashTarget,
+    refreshReviewState: hydrateReviewState,
     retryLoad,
+    reviewState,
     setCommentSections,
     sourceInfo,
     treeSource,

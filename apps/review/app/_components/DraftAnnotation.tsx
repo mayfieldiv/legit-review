@@ -2,12 +2,7 @@ import type { DiffLineAnnotation } from '@pierre/diffs';
 import { IconArrowRight } from '@pierre/icons';
 import { useEffect, useRef, useState } from 'react';
 
-import {
-  annotationCardBase,
-  type AvatarName,
-  CommentAuthorAvatar,
-  getRandomPersona,
-} from './annotation-shared';
+import { annotationCardBase, CommentAuthorBadge } from './annotation-shared';
 import type { DraftCommentMetadata } from './types';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -16,12 +11,9 @@ interface DraftAnnotationProps {
   annotation: DiffLineAnnotation<DraftCommentMetadata>;
   itemId: string;
   onCancel(itemId: string, key: string): void;
-  onSave(
-    itemId: string,
-    key: string,
-    message: string,
-    author: AvatarName
-  ): void;
+  // Persists the comment; resolves false when saving failed (the draft stays
+  // open so the text isn't lost).
+  onSave(itemId: string, key: string, message: string): Promise<boolean>;
 }
 
 export function DraftAnnotation({
@@ -31,15 +23,20 @@ export function DraftAnnotation({
   onSave,
 }: DraftAnnotationProps) {
   const [message, setMessage] = useState(annotation.metadata.message);
-  const [persona] = useState(getRandomPersona);
+  const [saving, setSaving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const trimmedMessage = message.trim();
 
-  function handleSave() {
-    if (trimmedMessage.length === 0) {
+  async function handleSave() {
+    if (trimmedMessage.length === 0 || saving) {
       return;
     }
-    onSave(itemId, annotation.metadata.key, trimmedMessage, persona.name);
+    setSaving(true);
+    try {
+      await onSave(itemId, annotation.metadata.key, trimmedMessage);
+    } finally {
+      setSaving(false);
+    }
   }
 
   function tryCancel() {
@@ -65,11 +62,11 @@ export function DraftAnnotation({
       className={cn(annotationCardBase, 'flex-col md:flex-row')}
       onSubmit={(event) => {
         event.preventDefault();
-        handleSave();
+        void handleSave();
       }}
     >
       <div className="flex w-full gap-2.5">
-        <CommentAuthorAvatar seed={persona.name} />
+        <CommentAuthorBadge author="user" />
         <textarea
           ref={textareaRef}
           value={message}
@@ -86,7 +83,7 @@ export function DraftAnnotation({
             }
 
             event.preventDefault();
-            handleSave();
+            void handleSave();
           }}
           placeholder="Add a comment…"
           rows={2}
@@ -106,7 +103,7 @@ export function DraftAnnotation({
           type="submit"
           variant="default"
           size="icon-md"
-          disabled={trimmedMessage.length === 0}
+          disabled={trimmedMessage.length === 0 || saving}
           className="hidden rounded-full bg-blue-500 hover:bg-blue-600 md:flex"
         >
           <IconArrowRight className="size-4 rotate-[-90deg]" />
@@ -114,10 +111,10 @@ export function DraftAnnotation({
         <Button
           type="submit"
           variant="default"
-          disabled={trimmedMessage.length === 0}
+          disabled={trimmedMessage.length === 0 || saving}
           className="gap-1.5 bg-blue-500 hover:bg-blue-600 md:hidden"
         >
-          Submit
+          {saving ? 'Saving…' : 'Submit'}
           <IconArrowRight className="-mr-0.5 size-3" />
         </Button>
       </div>

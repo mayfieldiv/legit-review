@@ -11,9 +11,9 @@ import {
   useRef,
   useState,
 } from 'react';
+import { toast } from 'sonner';
 
 import { ThemeProvider } from './_theming/react/ThemeProvider';
-import { preloadAvatars } from './annotation-shared';
 import { CodeViewHeader } from './CodeViewHeader';
 import { CodeViewSidebar } from './CodeViewSidebar';
 import { CodeViewStatusPanel } from './CodeViewStatusPanel';
@@ -24,10 +24,14 @@ import type {
   CodeViewSavedCommentEntry,
   CodeViewSavedCommentEvent,
   CommentMetadata,
+  PersistCommentInput,
+  ReviewStateComment,
+  SavedCommentMetadata,
 } from './types';
 import { usePatchLoader } from './usePatchLoader';
 import { useThemeCycle } from './useThemeCycle';
 import {
+  getHunkIndexForLine,
   removeSavedCommentSidebarEntry,
   upsertSavedCommentSidebarEntry,
 } from './utils';
@@ -52,8 +56,6 @@ export function ReviewUI({ base, repo }: ReviewUIProps) {
 }
 
 function ReviewUIInner({ base, repo }: ReviewUIProps) {
-  useEffect(preloadAvatars, []);
-
   const isWorkerPoolReadyOrDisable = useIsWorkerPoolReadyOrDisabled();
   const [diffStyle, setDiffStyle] = useState<'split' | 'unified'>('split');
   const [collapseMode, setCollapseMode] = useState<'expanded' | 'collapsed'>(
@@ -127,10 +129,12 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
     commentSections,
     diffStats,
     errorMessage,
+    getFileHunkHashes,
     initialItems,
     loadState,
     onLineLinkChange,
     onViewerReady,
+    refreshReviewState,
     retryLoad,
     setCommentSections,
     sourceInfo,
@@ -190,13 +194,118 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
     },
     [commentFileByItemId, setCommentSections]
   );
+  // Persists a submitted draft. The hunk hash anchors the comment to the
+  // content it was written against so it can be flagged outdated later.
+  const persistComment = useCallback(
+    async (
+      input: PersistCommentInput
+    ): Promise<SavedCommentMetadata | null> => {
+      const file = commentFileByItemId?.get(input.itemId);
+      if (file == null) {
+        toast.error('Could not resolve the file for this comment.');
+        return null;
+      }
+      const hunkIndex = getHunkIndexForLine(
+        input.fileDiff,
+        input.side,
+        input.range.end
+      );
+      const hunkHash =
+        hunkIndex === -1
+          ? ''
+          : (getFileHunkHashes(file.path)?.hunkHashes[hunkIndex] ?? '');
+      try {
+        const params = new URLSearchParams({ repo });
+        const response = await fetch(`/api/comments?${params}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filePath: file.path,
+            side: input.side,
+            range: input.range,
+            hunkHash,
+            message: input.message,
+            author: 'user',
+          }),
+        });
+        if (!response.ok) {
+          throw new Error((await response.text()).trim());
+        }
+        const { comment } = (await response.json()) as {
+          comment: ReviewStateComment;
+        };
+        return {
+          kind: 'saved',
+          key: comment.id,
+          author: comment.author,
+          message: comment.message,
+          range: input.range,
+          resolved: false,
+          outdated: false,
+        };
+      } catch (error) {
+        toast.error(
+          error instanceof Error && error.message !== ''
+            ? error.message
+            : 'Failed to save comment.'
+        );
+        return null;
+      }
+    },
+    [commentFileByItemId, getFileHunkHashes, repo]
+  );
+  const handleToggleResolved = useCallback(
+    (itemId: string, key: string, resolved: boolean) => {
+      void (async () => {
+        try {
+          const params = new URLSearchParams({ repo });
+          const response = await fetch(`/api/comments/${key}?${params}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(
+              resolved ? { resolved, resolvedBy: 'user' } : { resolved }
+            ),
+          });
+          if (!response.ok) {
+            throw new Error((await response.text()).trim());
+          }
+        } catch (error) {
+          toast.error(
+            error instanceof Error && error.message !== ''
+              ? error.message
+              : 'Failed to update comment.'
+          );
+        }
+        // Server state is the source of truth either way: success re-renders
+        // the resolved badge, failure restores the previous state.
+        void refreshReviewState();
+      })();
+    },
+    [refreshReviewState, repo]
+  );
   const handleCommentDeleted = useCallback(
     (comment: CodeViewDeletedCommentEvent) => {
+      // The viewer already removed the annotation optimistically.
       setCommentSections((prev) =>
         removeSavedCommentSidebarEntry(prev, comment)
       );
+      void (async () => {
+        try {
+          const params = new URLSearchParams({ repo });
+          const response = await fetch(
+            `/api/comments/${comment.key}?${params}`,
+            { method: 'DELETE' }
+          );
+          if (!response.ok && response.status !== 404) {
+            throw new Error((await response.text()).trim());
+          }
+        } catch {
+          toast.error('Failed to delete comment.');
+          void refreshReviewState();
+        }
+      })();
     },
-    [setCommentSections]
+    [refreshReviewState, repo, setCommentSections]
   );
   const handleToggleFileTreeOverlay = useCallback(() => {
     setFileTreeOverlayOpen((open) => !open);
@@ -290,7 +399,9 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
             onCommentDeleted={handleCommentDeleted}
             onCommentSaved={handleCommentSaved}
             onLineLinkChange={onLineLinkChange}
+            onToggleResolved={handleToggleResolved}
             onViewerReady={onViewerReady}
+            persistComment={persistComment}
           />
         </>
       ) : (

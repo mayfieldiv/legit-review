@@ -1,4 +1,8 @@
-import type { AnnotationSide, SelectedLineRange } from '@pierre/diffs';
+import type {
+  AnnotationSide,
+  FileDiffMetadata,
+  SelectedLineRange,
+} from '@pierre/diffs';
 import type { FileTreeGitStatusPatch, GitStatusEntry } from '@pierre/trees';
 
 export type ViewerLoadState =
@@ -18,10 +22,18 @@ export interface ReviewSourceInfo {
 
 export interface SavedCommentMetadata {
   kind: 'saved';
+  // The store id doubles as the annotation key.
   key: string;
   author: string;
   message: string;
   range: SelectedLineRange;
+  resolved: boolean;
+  resolvedBy?: string;
+  resolutionNote?: string;
+  // True when the hunk this comment was anchored to no longer exists in the
+  // current diff (its content hash disappeared) — the code changed since the
+  // comment was written.
+  outdated: boolean;
 }
 
 export interface DraftCommentMetadata {
@@ -48,6 +60,42 @@ export type CodeViewCommentFileByItemId = ReadonlyMap<
 // render "Line N" without a misleading + / - sigil for context lines.
 export type CommentLineType = 'change' | 'context';
 
+// Everything the viewer knows about a draft when it is submitted; the
+// container resolves the file path + hunk hash and POSTs to the store.
+export interface PersistCommentInput {
+  fileDiff: FileDiffMetadata;
+  itemId: string;
+  message: string;
+  range: SelectedLineRange;
+  side: AnnotationSide;
+}
+
+// A comment as returned by /api/state and /api/comments.
+export interface ReviewStateComment {
+  id: string;
+  filePath: string;
+  side: AnnotationSide;
+  lineNumber: number;
+  range: SelectedLineRange;
+  lineSnippet: string;
+  hunkHash: string;
+  message: string;
+  author: string;
+  resolved: boolean;
+  resolvedBy?: string;
+  resolutionNote?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewStateResponse {
+  repoPath: string;
+  branch: string;
+  comments: ReviewStateComment[];
+  viewedHunks: Record<string, string[]>;
+  viewedFiles: Record<string, string>;
+}
+
 export interface CodeViewSavedCommentEvent {
   author: string;
   itemId: string;
@@ -55,7 +103,9 @@ export interface CodeViewSavedCommentEvent {
   lineNumber: number;
   lineType: CommentLineType;
   message: string;
+  outdated: boolean;
   range: SelectedLineRange;
+  resolved: boolean;
   side: AnnotationSide;
 }
 
@@ -71,7 +121,9 @@ export interface CodeViewSavedCommentEntry {
   lineNumber: number;
   lineType: CommentLineType;
   message: string;
+  outdated: boolean;
   range: SelectedLineRange;
+  resolved: boolean;
   side: AnnotationSide;
 }
 

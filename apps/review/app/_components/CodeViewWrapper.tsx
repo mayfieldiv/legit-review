@@ -24,14 +24,15 @@ import {
 import { diffshubChromeMapping } from './_theming/js/diffshubChromeMapping';
 import { ThemedCodeView } from './_theming/react/ThemedCodeView';
 import { useChromeThemeProps } from './_theming/react/useChromeThemeProps';
-import type { AvatarName } from './annotation-shared';
 import { CODE_VIEW_CUSTOM_CSS, CODE_VIEW_LAYOUT } from './constants';
 import { DraftAnnotation } from './DraftAnnotation';
-import { ExampleAnnotation } from './ExampleAnnotation';
+import { SavedAnnotation } from './SavedAnnotation';
 import type {
   CodeViewDeletedCommentEvent,
   CodeViewSavedCommentEvent,
   CommentMetadata,
+  PersistCommentInput,
+  SavedCommentMetadata,
 } from './types';
 import {
   classifyCommentLineType,
@@ -74,6 +75,12 @@ interface CodeViewWrapperProps {
   diffStyle: 'split' | 'unified';
   onCommentDeleted(comment: CodeViewDeletedCommentEvent): void;
   onCommentSaved(comment: CodeViewSavedCommentEvent): void;
+  onToggleResolved(itemId: string, key: string, resolved: boolean): void;
+  // Persists a submitted draft to the review store; null means the save
+  // failed (the caller surfaces the error) and the draft stays open.
+  persistComment(
+    input: PersistCommentInput
+  ): Promise<SavedCommentMetadata | null>;
   overflow: 'wrap' | 'scroll';
   showBackgrounds: boolean;
   diffIndicators: DiffIndicators;
@@ -91,6 +98,8 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
   diffStyle,
   onCommentDeleted,
   onCommentSaved,
+  onToggleResolved,
+  persistComment,
   overflow,
   showBackgrounds,
   diffIndicators,
@@ -255,23 +264,36 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
   );
 
   const handleSaveDraftComment = useStableCallback(
-    (itemId: string, key: string, message: string, author: AvatarName) => {
+    async (itemId: string, key: string, message: string): Promise<boolean> => {
       const trimmedMessage = message.trim();
       const { current: viewer } = viewerRef;
       if (trimmedMessage.length === 0 || viewer == null) {
-        return;
+        return false;
       }
 
       const item = viewer.getItem(itemId);
       if (item == null || !isDiffItem(item)) {
-        return;
+        return false;
       }
 
       const draftAnnotation = item?.annotations?.find(
         (annotation) => annotation.metadata.key === key
       );
       if (draftAnnotation == null || !isDraftAnnotation(draftAnnotation)) {
-        return;
+        return false;
+      }
+
+      // Persist first; only swap the draft card for a saved card once the
+      // store accepted the comment, so a failed save never loses the text.
+      const savedMetadata = await persistComment({
+        fileDiff: item.fileDiff,
+        itemId,
+        message: trimmedMessage,
+        range: draftAnnotation.metadata.range,
+        side: draftAnnotation.side,
+      });
+      if (savedMetadata == null) {
+        return false;
       }
 
       const updatedItem = updateViewerDiffItem(viewer, itemId, (item) => {
@@ -280,44 +302,18 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
         }
 
         const nextAnnotations: DiffLineAnnotation<CommentMetadata>[] =
-          item.annotations.map((annotation) => {
-            if (
-              annotation.metadata.key !== key ||
-              !isDraftAnnotation(annotation)
-            ) {
-              return annotation;
-            }
-
-            return {
-              ...annotation,
-              metadata: {
-                kind: 'saved',
-                key,
-                author,
-                message: trimmedMessage,
-                range: annotation.metadata.range,
-              },
-            };
-          });
-
-        let didChange = false;
-        for (let index = 0; index < nextAnnotations.length; index++) {
-          if (nextAnnotations[index] !== item.annotations[index]) {
-            didChange = true;
-            break;
-          }
-        }
-
-        if (!didChange) {
-          return false;
-        }
+          item.annotations.map((annotation) =>
+            annotation.metadata.key === key && isDraftAnnotation(annotation)
+              ? { ...annotation, metadata: savedMetadata }
+              : annotation
+          );
 
         item.annotations = nextAnnotations;
         return true;
       });
 
       if (updatedItem == null) {
-        return;
+        return false;
       }
 
       const { current: activeDraft } = activeDraftRef;
@@ -328,9 +324,9 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
       setSelectedLines(null);
       onLineLinkChange(null);
       onCommentSaved({
-        author,
+        author: savedMetadata.author,
         itemId,
-        key,
+        key: savedMetadata.key,
         lineNumber: draftAnnotation.lineNumber,
         lineType: classifyCommentLineType(
           item.fileDiff,
@@ -338,9 +334,12 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
           draftAnnotation.lineNumber
         ),
         message: trimmedMessage,
+        outdated: savedMetadata.outdated,
         range: draftAnnotation.metadata.range,
+        resolved: savedMetadata.resolved,
         side: draftAnnotation.side,
       });
+      return true;
     }
   );
 
@@ -398,10 +397,11 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
       }
 
       return (
-        <ExampleAnnotation
+        <SavedAnnotation
           annotation={annotation}
           itemId={item.id}
           onDelete={handleRemoveComment}
+          onToggleResolved={onToggleResolved}
           onToggleSelection={handleToggleCommentSelection}
         />
       );

@@ -48,6 +48,26 @@ export function isSavedAnnotation(
   return annotation.metadata.kind === 'saved';
 }
 
+// Finds the index of the hunk containing the given 1-based line on a diff
+// side, or -1 when no hunk covers it. Used to attach the containing hunk's
+// content hash to new comments so they can be flagged outdated later.
+export function getHunkIndexForLine(
+  fileDiff: FileDiffMetadata,
+  side: AnnotationSide,
+  lineNumber: number
+): number {
+  for (const [index, hunk] of fileDiff.hunks.entries()) {
+    const start =
+      side === 'additions' ? hunk.additionStart : hunk.deletionStart;
+    const count =
+      side === 'additions' ? hunk.additionCount : hunk.deletionCount;
+    if (lineNumber >= start && lineNumber < start + count) {
+      return index;
+    }
+  }
+  return -1;
+}
+
 // Translates the diff-level change type surfaced by @pierre/diffs into the
 // git-status vocabulary the file tree understands. Both rename variants fold
 // into 'renamed' so the tree shows a consistent rename badge regardless of
@@ -113,7 +133,9 @@ export function upsertSavedCommentSidebarEntry(
     lineNumber: entry.lineNumber,
     lineType: entry.lineType,
     message: entry.message,
+    outdated: entry.outdated,
     range: entry.range,
+    resolved: entry.resolved,
     side: entry.side,
   };
 

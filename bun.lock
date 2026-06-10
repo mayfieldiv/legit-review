@@ -144,9 +144,47 @@
         "typescript": "catalog:",
       },
     },
+    "apps/review": {
+      "name": "@pierre/review",
+      "version": "0.0.0",
+      "dependencies": {
+        "@pierre/diffs": "workspace:*",
+        "@pierre/icons": "catalog:",
+        "@pierre/theme": "catalog:",
+        "@pierre/theming": "workspace:*",
+        "@pierre/trees": "workspace:*",
+        "@pierre/truncate": "workspace:*",
+        "@radix-ui/react-dropdown-menu": "catalog:",
+        "@radix-ui/react-slot": "catalog:",
+        "@radix-ui/react-switch": "catalog:",
+        "babel-plugin-react-compiler": "catalog:",
+        "class-variance-authority": "catalog:",
+        "clsx": "catalog:",
+        "lucide-react": "catalog:",
+        "next": "catalog:",
+        "postcss": "catalog:",
+        "postcss-import": "catalog:",
+        "react": "catalog:",
+        "react-dom": "catalog:",
+        "sonner": "catalog:",
+        "tailwind-merge": "catalog:",
+        "tailwindcss": "catalog:",
+        "tw-animate-css": "catalog:",
+      },
+      "devDependencies": {
+        "@tailwindcss/postcss": "catalog:",
+        "@types/jsdom": "catalog:",
+        "@types/node": "catalog:",
+        "@types/react": "catalog:",
+        "@types/react-dom": "catalog:",
+        "concurrently": "catalog:",
+        "jsdom": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
     "packages/diffs": {
       "name": "@pierre/diffs",
-      "version": "1.2.8",
+      "version": "1.2.9",
       "dependencies": {
         "@pierre/theme": "catalog:",
         "@pierre/theming": "workspace:*",
@@ -719,6 +757,8 @@
     "@pierre/icons": ["@pierre/icons@0.5.0", "", { "peerDependencies": { "react": "^18.0.0 || ^19.0.0" } }, "sha512-c46ZiKK8Vh3fhJM7Ci9jKW36UKsD+DTxVnr91liX0bgpc2jkwICW9bx9XTQsETpLR9CnoLSA/4ZQyLrb5HO0GA=="],
 
     "@pierre/path-store": ["@pierre/path-store@workspace:packages/path-store"],
+
+    "@pierre/review": ["@pierre/review@workspace:apps/review"],
 
     "@pierre/storage": ["@pierre/storage@0.0.10", "", { "dependencies": { "jose": "^5.10.0", "snakecase-keys": "^9.0.2" } }, "sha512-fDFrsnRiNTq7lpY56MGE4vRjYAHfTFLsxN18wbnxBlOk1XB1pxzgMfx5DwiqRcXs8+Gt2lmeXvlYAa1gGR4c7w=="],
 

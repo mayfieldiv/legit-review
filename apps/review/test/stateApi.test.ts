@@ -128,7 +128,12 @@ describe('review state API', () => {
       comment: {
         resolved: boolean;
         resolvedBy: string;
-        replies: { kind: string; author: string; message: string }[];
+        replies: {
+          id: string;
+          kind: string;
+          author: string;
+          message: string;
+        }[];
       };
     };
     expect(patched.comment.resolved).toBe(true);
@@ -138,6 +143,32 @@ describe('review state API', () => {
       kind: 'resolution',
       author: 'claude',
       message: 'Fixed in abc123.',
+    });
+    const resolutionReplyId = patched.comment.replies[0]?.id ?? '';
+
+    const editResolutionResponse = await patchReplyRoute(
+      jsonRequest(
+        apiUrl(`/api/comments/${comment.id}/replies/${resolutionReplyId}`),
+        'PATCH',
+        { message: 'Fixed in def456.' }
+      ),
+      {
+        params: Promise.resolve({ id: comment.id, replyId: resolutionReplyId }),
+      }
+    );
+    expect(editResolutionResponse.status).toBe(200);
+    const editedResolution = (await editResolutionResponse.json()) as {
+      comment: {
+        replies: { id: string; kind: string; message: string }[];
+      };
+    };
+    expect(
+      editedResolution.comment.replies.find(
+        (reply) => reply.id === resolutionReplyId
+      )
+    ).toMatchObject({
+      kind: 'resolution',
+      message: 'Fixed in def456.',
     });
 
     const openAfter = (await (

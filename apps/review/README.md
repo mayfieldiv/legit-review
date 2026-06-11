@@ -29,8 +29,8 @@ then `main`/`master`, then `HEAD` (working-tree-only review).
 - **Reply threads** — every comment is a GitHub-style conversation: replies,
   in-place edit/delete on each message, and a Resolve/Unresolve conversation
   footer. Resolving can include a `resolutionNote`, which appears as a special
-  resolved event in the thread. Open threads default expanded; resolved threads
-  default collapsed.
+  editable reply in the thread. Open threads are marked unresolved and default
+  expanded; resolved threads default collapsed.
 - **Viewed marks** — a Viewed pill per hunk and a Viewed checkbox per file.
   Fully-viewed files auto-collapse. Marks are stored under content hashes of the
   hunk text, so when code changes the affected hunk pops back open on its own;

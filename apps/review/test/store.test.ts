@@ -75,6 +75,13 @@ describe('store', () => {
     expect(reopened?.resolved).toBe(false);
     expect(reopened?.resolvedBy).toBeUndefined();
 
+    const resolvedWithoutNote = await updateComment(REPO, BRANCH, created.id, {
+      resolved: true,
+      resolvedBy: 'user',
+    });
+    expect(resolvedWithoutNote?.resolved).toBe(true);
+    expect(resolvedWithoutNote?.replies).toHaveLength(1);
+
     expect(
       await updateComment(REPO, BRANCH, 'missing-id', { resolved: true })
     ).toBeUndefined();

@@ -61,6 +61,7 @@ export const SavedAnnotation = memo(function SavedAnnotation({
 }: SavedAnnotationProps) {
   const { metadata } = annotation;
   const selection = { id: itemId, range: metadata.range };
+  const visibleReplies = metadata.replies.filter(isVisibleThreadEntry);
   const [collapsed, setCollapsed] = useState(metadata.resolved);
   const previousResolved = useRef(metadata.resolved);
 
@@ -99,7 +100,7 @@ export const SavedAnnotation = memo(function SavedAnnotation({
       <ThreadHeader
         collapsed={collapsed}
         range={metadata.range}
-        replyCount={metadata.replies.length}
+        replyCount={visibleReplies.length}
         resolved={metadata.resolved}
         outdated={metadata.outdated}
         onToggle={() => setCollapsed((value) => !value)}
@@ -131,13 +132,27 @@ export const SavedAnnotation = memo(function SavedAnnotation({
               onDelete(itemId, metadata.key);
             }}
           />
-          {metadata.replies.map((reply) =>
+          {visibleReplies.map((reply) =>
             reply.kind === 'resolution' ? (
-              <ResolutionEvent
+              <ThreadMessage
                 key={reply.id}
                 author={reply.author}
                 createdAt={reply.createdAt}
                 message={reply.message}
+                kind="resolution"
+                leading={
+                  <span
+                    aria-label="Resolution note"
+                    title="Resolution note"
+                    className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-emerald-600/15 text-emerald-600 dark:text-emerald-400"
+                  >
+                    <IconCheck size={13} />
+                  </span>
+                }
+                onSaveEdit={(message) =>
+                  onEditReply(metadata.key, reply.id, message)
+                }
+                onDelete={() => void onDeleteReply(metadata.key, reply.id)}
               />
             ) : (
               <ThreadMessage
@@ -167,6 +182,12 @@ export const SavedAnnotation = memo(function SavedAnnotation({
     </div>
   );
 });
+
+function isVisibleThreadEntry(
+  reply: SavedCommentMetadata['replies'][number]
+): boolean {
+  return reply.kind === 'reply' || reply.message.trim() !== '';
+}
 
 interface ThreadHeaderProps {
   collapsed: boolean;
@@ -224,10 +245,9 @@ function ThreadHeader({
           Outdated
         </span>
       )}
-      {resolved && (
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-600/15 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-          <IconCheck size={10} />
-          Resolved
+      {!resolved && (
+        <span className="inline-flex shrink-0 items-center rounded-full bg-blue-500/15 px-2 py-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400">
+          Unresolved
         </span>
       )}
     </div>
@@ -254,43 +274,6 @@ function formatRangeEndpoint(
     return `L${lineNumber}`;
   }
   return `${lineNumber}`;
-}
-
-interface ResolutionEventProps {
-  author: string;
-  createdAt: string;
-  message: string;
-}
-
-// System event shown inline with replies when someone resolves the thread.
-// A non-empty message is the resolution note from the PATCH request.
-function ResolutionEvent({ author, createdAt, message }: ResolutionEventProps) {
-  return (
-    <div
-      className={cn(
-        'flex items-start gap-2 border-t px-3 py-2.5',
-        threadBorder
-      )}
-    >
-      <span className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-emerald-600/15 text-emerald-600 dark:text-emerald-400">
-        <IconCheck size={13} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-          <strong className="truncate text-[13px]">{author}</strong>
-          <span className={cn('text-[12px]', mutedText)}>
-            resolved this conversation
-          </span>
-          <span className={cn('shrink-0 text-[12px]', mutedText)}>
-            {formatRelativeTime(createdAt)}
-          </span>
-        </div>
-        {message !== '' && (
-          <p className="m-0 pt-1 text-[14px] whitespace-pre-wrap">{message}</p>
-        )}
-      </div>
-    </div>
-  );
 }
 
 interface ThreadFooterProps {
@@ -324,8 +307,9 @@ interface ThreadMessageProps {
   author: string;
   createdAt: string;
   message: string;
-  kind: 'comment' | 'reply';
+  kind: 'comment' | 'reply' | 'resolution';
   badges?: ReactNode;
+  leading?: ReactNode;
   onDelete(): void;
   onSaveEdit(message: string): Promise<boolean>;
 }
@@ -339,6 +323,7 @@ function ThreadMessage({
   message,
   kind,
   badges,
+  leading,
   onDelete,
   onSaveEdit,
 }: ThreadMessageProps) {
@@ -346,6 +331,7 @@ function ThreadMessage({
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const trimmedDraft = draft.trim();
+  const actionLabel = kind === 'resolution' ? 'resolution note' : kind;
 
   async function handleSave() {
     if (trimmedDraft.length === 0 || saving) {
@@ -369,11 +355,13 @@ function ThreadMessage({
     <div
       className={cn(
         'group/row flex flex-col px-3 py-2.5',
-        kind === 'reply' && cn('border-t', threadBorder)
+        kind !== 'comment' && cn('border-t', threadBorder)
       )}
     >
       <div className="flex min-w-0 items-center gap-2">
-        <CommentAuthorBadge author={author} className="size-6 text-xs" />
+        {leading ?? (
+          <CommentAuthorBadge author={author} className="size-6 text-xs" />
+        )}
         <strong className="truncate text-[13px]">{author}</strong>
         <span className={cn('shrink-0 text-[12px]', mutedText)}>
           {formatRelativeTime(createdAt)}
@@ -384,7 +372,7 @@ function ThreadMessage({
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label={`Edit ${kind}`}
+              aria-label={`Edit ${actionLabel}`}
               title="Edit"
               className="pointer-events-none group-hover/row:pointer-events-auto"
               onClick={(event) => {
@@ -398,7 +386,7 @@ function ThreadMessage({
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label={`Delete ${kind}`}
+              aria-label={`Delete ${actionLabel}`}
               title="Delete"
               className="pointer-events-none group-hover/row:pointer-events-auto"
               onClick={(event) => {

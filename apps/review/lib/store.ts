@@ -242,13 +242,12 @@ export async function updateComment(
       comment.message = input.message;
     }
     if (input.resolved != null) {
-      const wasResolved = comment.resolved;
       comment.resolved = input.resolved;
       if (input.resolved) {
         const resolvedBy = input.resolvedBy ?? comment.resolvedBy ?? 'user';
         const resolutionNote = input.resolutionNote?.trim() ?? '';
         comment.resolvedBy = resolvedBy;
-        if (!wasResolved || resolutionNote !== '') {
+        if (resolutionNote !== '') {
           const now = new Date().toISOString();
           comment.replies.push({
             id: randomUUID(),

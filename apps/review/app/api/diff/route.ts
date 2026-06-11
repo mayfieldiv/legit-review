@@ -3,6 +3,7 @@ import {
   GitRequestError,
   resolveLocalDiffSource,
 } from '@/lib/git';
+import { recordRecentRepo } from '@/lib/store';
 
 // Streams the local review patch for ?repo=<abs path>[&base=<ref>]: the
 // tracked diff against merge-base(base, HEAD) plus synthesized patches for
@@ -30,6 +31,11 @@ export async function GET(request: Request) {
       error instanceof Error ? error.message : 'Unknown error',
       { status: 500 }
     );
+  }
+  try {
+    await recordRecentRepo(source.repoPath, source.branch);
+  } catch (error) {
+    console.warn('Failed to record recent review repo', error);
   }
 
   return new Response(createLocalDiffStream(source), {

@@ -1,5 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -64,6 +71,22 @@ export interface ReviewState {
   viewedFiles: Record<string, string>;
 }
 
+export interface ThreadCounts {
+  unresolved: number;
+  resolved: number;
+}
+
+export interface RecentRepoEntry {
+  repoPath: string;
+  branch: string;
+  openedAt: string;
+}
+
+interface RecentRepoIndex {
+  version: 1;
+  entries: RecentRepoEntry[];
+}
+
 export interface CreateCommentInput {
   filePath: string;
   side: CommentSide;
@@ -86,6 +109,9 @@ export interface CreateReplyInput {
   author?: string;
 }
 
+const RECENT_REPOS_FILE = 'recent-repos.json';
+const MAX_RECENT_REPOS = 50;
+
 function dataDir(): string {
   const override = process.env.PIERRE_REVIEW_DATA_DIR;
   if (override != null && override !== '') {
@@ -102,6 +128,10 @@ function dataDir(): string {
 export function stateFilePath(repoPath: string, branch: string): string {
   const repoKey = createHash('sha1').update(repoPath).digest('hex');
   return path.join(dataDir(), repoKey, `${encodeURIComponent(branch)}.json`);
+}
+
+function recentReposFilePath(): string {
+  return path.join(dataDir(), RECENT_REPOS_FILE);
 }
 
 function createEmptyState(repoPath: string, branch: string): ReviewState {
@@ -132,6 +162,28 @@ export async function readState(
   } catch {
     return createEmptyState(repoPath, branch);
   }
+}
+
+export function countReviewThreads(
+  state: Pick<ReviewState, 'comments'>
+): ThreadCounts {
+  let unresolved = 0;
+  let resolved = 0;
+  for (const comment of state.comments) {
+    if (comment.resolved) {
+      resolved++;
+    } else {
+      unresolved++;
+    }
+  }
+  return { unresolved, resolved };
+}
+
+export async function countStoredReviewThreads(
+  repoPath: string,
+  branch: string
+): Promise<ThreadCounts> {
+  return countReviewThreads(await readState(repoPath, branch));
 }
 
 // Upgrades comments written before reply threads existed: gives them an empty
@@ -169,9 +221,13 @@ async function writeStateFile(
   filePath: string,
   state: ReviewState
 ): Promise<void> {
+  await writeJsonFile(filePath, state);
+}
+
+async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.tmp-${process.pid}`;
-  await writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
   await rename(tempPath, filePath);
 }
 
@@ -197,6 +253,166 @@ export async function mutateState(
     task.catch(() => undefined)
   );
   return task;
+}
+
+export async function recordRecentRepo(
+  repoPath: string,
+  branch: string
+): Promise<void> {
+  const filePath = recentReposFilePath();
+  const now = new Date().toISOString();
+  const previous = mutationQueues.get(filePath) ?? Promise.resolve();
+  const task = previous.then(async () => {
+    const entries = await readRecentRepoIndexFile(filePath);
+    const next: RecentRepoIndex = {
+      version: 1,
+      entries: [
+        { repoPath, branch, openedAt: now },
+        ...entries.filter((entry) => entry.repoPath !== repoPath),
+      ].slice(0, MAX_RECENT_REPOS),
+    };
+    await writeJsonFile(filePath, next);
+  });
+  mutationQueues.set(
+    filePath,
+    task.catch(() => undefined)
+  );
+  await task;
+}
+
+export async function listRecentRepoEntries(
+  limit = MAX_RECENT_REPOS
+): Promise<RecentRepoEntry[]> {
+  const entriesByKey = new Map<string, RecentRepoEntry>();
+  for (const entry of await readRecentRepoIndexFile(recentReposFilePath())) {
+    entriesByKey.set(recentEntryKey(entry), entry);
+  }
+  for (const entry of await listStateBackfillRecentEntries()) {
+    const key = recentEntryKey(entry);
+    const existing = entriesByKey.get(key);
+    if (
+      existing == null ||
+      Date.parse(entry.openedAt) > Date.parse(existing.openedAt)
+    ) {
+      entriesByKey.set(key, entry);
+    }
+  }
+  return [...entriesByKey.values()]
+    .sort(
+      (left, right) => Date.parse(right.openedAt) - Date.parse(left.openedAt)
+    )
+    .slice(0, limit);
+}
+
+function recentEntryKey(entry: Pick<RecentRepoEntry, 'repoPath' | 'branch'>) {
+  return `${entry.repoPath}\0${entry.branch}`;
+}
+
+async function readRecentRepoIndexFile(
+  filePath: string
+): Promise<RecentRepoEntry[]> {
+  try {
+    const parsed = JSON.parse(await readFile(filePath, 'utf8')) as unknown;
+    if (!isRecord(parsed) || parsed.version !== 1) {
+      return [];
+    }
+    const entries = parsed.entries;
+    if (!Array.isArray(entries)) {
+      return [];
+    }
+    return entries.flatMap((entry) => {
+      const parsedEntry = parseRecentRepoEntry(entry);
+      return parsedEntry == null ? [] : [parsedEntry];
+    });
+  } catch {
+    return [];
+  }
+}
+
+// Older installs only have per-branch state files. Scanning those once on the
+// picker lets existing review history appear without requiring a migration.
+async function listStateBackfillRecentEntries(): Promise<RecentRepoEntry[]> {
+  const rootDir = dataDir();
+  let repoDirs;
+  try {
+    repoDirs = await readdir(rootDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const entries: RecentRepoEntry[] = [];
+  for (const repoDir of repoDirs) {
+    if (!repoDir.isDirectory()) {
+      continue;
+    }
+    const dirPath = path.join(rootDir, repoDir.name);
+    let branchFiles;
+    try {
+      branchFiles = await readdir(dirPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const branchFile of branchFiles) {
+      if (!branchFile.isFile() || !branchFile.name.endsWith('.json')) {
+        continue;
+      }
+      const entry = await readStateBackfillEntry(
+        path.join(dirPath, branchFile.name)
+      );
+      if (entry != null) {
+        entries.push(entry);
+      }
+    }
+  }
+  return entries;
+}
+
+async function readStateBackfillEntry(
+  filePath: string
+): Promise<RecentRepoEntry | undefined> {
+  try {
+    const [raw, fileStat] = await Promise.all([
+      readFile(filePath, 'utf8'),
+      stat(filePath),
+    ]);
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      !isRecord(parsed) ||
+      parsed.version !== 1 ||
+      typeof parsed.repoPath !== 'string' ||
+      typeof parsed.branch !== 'string'
+    ) {
+      return undefined;
+    }
+    return {
+      repoPath: parsed.repoPath,
+      branch: parsed.branch,
+      openedAt: fileStat.mtime.toISOString(),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseRecentRepoEntry(value: unknown): RecentRepoEntry | undefined {
+  if (
+    !isRecord(value) ||
+    typeof value.repoPath !== 'string' ||
+    typeof value.branch !== 'string' ||
+    typeof value.openedAt !== 'string' ||
+    Number.isNaN(Date.parse(value.openedAt))
+  ) {
+    return undefined;
+  }
+  return {
+    repoPath: value.repoPath,
+    branch: value.branch,
+    openedAt: value.openedAt,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 export async function createComment(

@@ -207,23 +207,21 @@ function ThreadHeader({
   onToggle,
 }: ThreadHeaderProps) {
   return (
-    <div
+    <button
+      type="button"
+      aria-expanded={!collapsed}
+      aria-label={collapsed ? 'Expand thread' : 'Collapse thread'}
+      title={collapsed ? 'Expand thread' : 'Collapse thread'}
       className={cn(
-        'flex min-w-0 items-center gap-2 px-2.5 py-2 text-[12px]',
+        'flex min-w-0 w-full cursor-pointer items-center gap-2 px-2.5 py-2 text-left text-[12px] outline-none transition hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/50',
         !collapsed && cn('border-b', threadBorder)
       )}
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
     >
-      <button
-        type="button"
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? 'Expand thread' : 'Collapse thread'}
-        title={collapsed ? 'Expand thread' : 'Collapse thread'}
-        className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm transition"
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle();
-        }}
-      >
+      <span className="text-muted-foreground inline-flex size-5 shrink-0 items-center justify-center rounded-sm transition">
         <IconChevronSm
           aria-hidden="true"
           className={cn(
@@ -231,7 +229,7 @@ function ThreadHeader({
             collapsed && '-rotate-90'
           )}
         />
-      </button>
+      </span>
       <span className="min-w-0 flex-1 truncate font-medium">
         Comment on {formatThreadRange(range)}
       </span>
@@ -250,7 +248,7 @@ function ThreadHeader({
           Unresolved
         </span>
       )}
-    </div>
+    </button>
   );
 }
 

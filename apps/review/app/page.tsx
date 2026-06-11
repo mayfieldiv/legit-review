@@ -1,7 +1,7 @@
-import { redirect } from 'next/navigation';
+import { RepoHome } from './_components/RepoHome';
 
-// The viewer lives at /review (it will grow ?repo=&base= params with the
-// local git diff source). The root route just forwards there.
+export const dynamic = 'force-dynamic';
+
 export default function HomePage() {
-  redirect('/review');
+  return <RepoHome />;
 }

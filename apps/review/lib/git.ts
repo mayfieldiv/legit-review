@@ -144,6 +144,13 @@ export interface RepoIdentity {
   branch: string;
 }
 
+export interface RepoWorktree {
+  path: string;
+  branch: string;
+  head: string | null;
+  isDetached: boolean;
+}
+
 // Repo paths arrive from a form/query param, not a shell, so `~` is never
 // expanded by the time it reaches us. The server and reviewer are the same
 // local user, so expanding against our own home dir is correct. $HOME is
@@ -241,6 +248,98 @@ export async function resolveRepoIdentity(
     ? resolved.head.slice('ref: refs/heads/'.length)
     : 'HEAD';
   return { repoPath: resolved.repoPath, branch };
+}
+
+export async function resolveRepoCommonGitDir(
+  repoPath: string
+): Promise<string> {
+  const commonDir = await gitText(repoPath, ['rev-parse', '--git-common-dir']);
+  if (commonDir == null || commonDir === '') {
+    throw new GitRequestError(`Not a git repository: ${repoPath}`);
+  }
+  return path.isAbsolute(commonDir)
+    ? commonDir
+    : path.resolve(repoPath, commonDir);
+}
+
+export async function listRepoWorktrees(
+  repoPath: string
+): Promise<RepoWorktree[]> {
+  const result = await runGit(repoPath, ['worktree', 'list', '--porcelain']);
+  if (result.code !== 0) {
+    throw new GitRequestError(
+      `Unable to list worktrees for ${repoPath}: ${result.stderr.trim()}`
+    );
+  }
+  return parseGitWorktreeList(result.stdout.toString('utf8'));
+}
+
+export function parseGitWorktreeList(output: string): RepoWorktree[] {
+  const worktrees: (RepoWorktree & {
+    isBare: boolean;
+    isPrunable: boolean;
+  })[] = [];
+  let current:
+    | (RepoWorktree & {
+        isBare: boolean;
+        isPrunable: boolean;
+      })
+    | undefined;
+
+  const pushCurrent = () => {
+    if (current != null && !current.isBare && !current.isPrunable) {
+      worktrees.push(current);
+    }
+  };
+
+  for (const line of output.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      pushCurrent();
+      current = {
+        path: line.slice('worktree '.length),
+        branch: 'HEAD',
+        head: null,
+        isDetached: false,
+        isBare: false,
+        isPrunable: false,
+      };
+      continue;
+    }
+    if (current == null || line === '') {
+      continue;
+    }
+    if (line.startsWith('HEAD ')) {
+      current.head = line.slice('HEAD '.length);
+      continue;
+    }
+    if (line.startsWith('branch ')) {
+      const branch = line.slice('branch '.length);
+      current.branch = branch.startsWith('refs/heads/')
+        ? branch.slice('refs/heads/'.length)
+        : branch;
+      current.isDetached = false;
+      continue;
+    }
+    if (line === 'detached') {
+      current.branch = 'HEAD';
+      current.isDetached = true;
+      continue;
+    }
+    if (line === 'bare') {
+      current.isBare = true;
+      continue;
+    }
+    if (line.startsWith('prunable')) {
+      current.isPrunable = true;
+    }
+  }
+  pushCurrent();
+  return worktrees.map((entry) => ({
+    path: entry.path,
+    branch: entry.branch,
+    head: entry.head,
+    isDetached: entry.isDetached,
+  }));
 }
 
 export async function resolveLocalDiffSource(

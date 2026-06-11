@@ -475,9 +475,11 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
         disableLineNumbers: !lineNumbers,
         lineHoverHighlight: 'number',
         // hunkSeparators: 'line-info-basic',
-        // GitHub-sized expansion steps for the hunk-separator expand buttons
-        // (the default of 100 jumps too far to stay oriented).
-        expansionLineCount: 20,
+        // Devin-style hunk separators: small expansion steps plus labeled
+        // "<n> lines" / "All <n> lines" buttons, so each click's reach is
+        // visible before committing to it.
+        expansionLineCount: 5,
+        expansionLineLabels: true,
         enableLineSelection: true,
         enableGutterUtility: true,
         stickyHeaders: true,

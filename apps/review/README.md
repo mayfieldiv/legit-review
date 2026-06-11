@@ -31,9 +31,9 @@ then `main`/`master`, then `HEAD` (working-tree-only review).
   untouched hunks stay collapsed.
 - **Outdated detection** — a comment whose anchor hunk's content changed is
   badged "Outdated" automatically.
-- **Expandable context** — GitHub-style expanders on hunk separators reveal the
-  unmodified lines above/below/between hunks (20 per click, or all at once).
-  After the diff streams in, the client fetches both full file sides
+- **Expandable context** — labeled expanders on hunk separators ("5 lines", "All
+  n lines") reveal the unmodified lines above/below/between hunks. After the
+  diff streams in, the client fetches both full file sides
   (`POST /api/contents`) and re-parses each file's patch with them attached;
   files whose contents can't be paired (binary, oversized, mid-edit drift)
   simply keep the plain diff.

@@ -15,6 +15,8 @@ import {
 } from '../app/api/comments/route';
 import { GET as getStateRoute } from '../app/api/state/route';
 import { PUT as putViewedRoute } from '../app/api/viewed/route';
+import { synthesizeUntrackedPatch } from '../lib/git';
+import { hashPatchFiles } from '../lib/hunkHash';
 
 let baseDir: string;
 let repo: string;
@@ -147,6 +149,83 @@ describe('review state API', () => {
       })
     );
     expect(response.status).toBe(400);
+  });
+
+  test('anchors agent comments without hunkHash to the current diff', async () => {
+    // Dirty the working tree so a.txt has a real hunk vs HEAD.
+    await writeFile(path.join(repo, 'a.txt'), 'one\ntwo\n');
+
+    const response = await postCommentRoute(
+      jsonRequest(apiUrl('/api/comments'), 'POST', {
+        filePath: 'a.txt',
+        side: 'additions',
+        range: { start: 2, end: 2 },
+        message: 'Agent finding',
+        author: 'reviewer',
+      })
+    );
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      comment: { hunkHash: string; lineSnippet: string };
+      warning?: string;
+    };
+    expect(body.warning).toBeUndefined();
+    expect(body.comment.lineSnippet).toBe('two');
+
+    // The server-computed hash must equal what the browser computes from the
+    // /api/diff patch bytes — same diff invocation, same hashing.
+    const patch = execFileSync(
+      'git',
+      ['diff', '--find-renames', '--no-color', '--no-ext-diff', 'HEAD'],
+      { cwd: repo, encoding: 'utf8' }
+    );
+    const fileHashes = await hashPatchFiles(patch);
+    const aTxt = fileHashes.find((file) => file.filePath === 'a.txt');
+    expect(body.comment.hunkHash).toBe(aTxt?.hunkHashes[0] as string);
+  });
+
+  test('anchors agent comments on untracked files via the synthesized patch', async () => {
+    await writeFile(path.join(repo, 'new.txt'), 'alpha\nbeta\n');
+
+    const response = await postCommentRoute(
+      jsonRequest(apiUrl('/api/comments'), 'POST', {
+        filePath: 'new.txt',
+        side: 'additions',
+        range: { start: 1, end: 1 },
+        message: 'Untracked finding',
+        author: 'reviewer',
+      })
+    );
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      comment: { hunkHash: string; lineSnippet: string };
+      warning?: string;
+    };
+    expect(body.warning).toBeUndefined();
+    expect(body.comment.lineSnippet).toBe('alpha');
+
+    const patch = await synthesizeUntrackedPatch(repo, 'new.txt');
+    const fileHashes = await hashPatchFiles(patch as string);
+    expect(body.comment.hunkHash).toBe(fileHashes[0]?.hunkHashes[0]);
+  });
+
+  test('warns when an agent comment misses every hunk', async () => {
+    const response = await postCommentRoute(
+      jsonRequest(apiUrl('/api/comments'), 'POST', {
+        filePath: 'a.txt',
+        side: 'additions',
+        range: { start: 999, end: 999 },
+        message: 'Bad anchor',
+        author: 'reviewer',
+      })
+    );
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      comment: { hunkHash: string };
+      warning?: string;
+    };
+    expect(body.comment.hunkHash).toBe('');
+    expect(body.warning).toContain('outdated tracking');
   });
 
   test('viewed marks for hunks and files', async () => {

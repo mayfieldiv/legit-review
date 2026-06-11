@@ -76,6 +76,91 @@ export async function hashFileBlock(
   return { filePath, fileHash, hunkHashes };
 }
 
+export interface HunkAnchor {
+  hunkHash: string;
+  lineSnippet: string;
+}
+
+const HUNK_HEADER_PATTERN = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+// Locates the hunk containing `line` on `side` of `filePath`'s diff block and
+// returns the same content hash hashFileBlock assigns that hunk, plus the
+// anchored line's text (diff marker stripped). This is how the server anchors
+// agent-posted comments: the browser hashes the rendered diff itself, but
+// REST callers only know a path, side, and line number. Line numbers are
+// new-file numbers on the additions side and old-file numbers on the
+// deletions side; context lines exist on both. Returns null when the file or
+// line is not part of the patch.
+export async function findHunkAnchorInPatch(
+  patchText: string,
+  filePath: string,
+  side: 'deletions' | 'additions',
+  line: number
+): Promise<HunkAnchor | null> {
+  for (const block of splitPatchIntoFileBlocks(patchText)) {
+    const lines = block.split('\n');
+    if (extractFilePath(lines) !== filePath) {
+      continue;
+    }
+    // Collect hunk bodies exactly like hashFileBlock does (hash parity is
+    // the whole point), while also walking the per-side line counters to
+    // find which hunk covers the requested line.
+    const hunkBodies: string[] = [];
+    let currentHunk: string[] | null = null;
+    let matchedHunkIndex = -1;
+    let matchedSnippet = '';
+    let oldLine = 0;
+    let newLine = 0;
+    for (const rawLine of lines) {
+      if (rawLine.startsWith('@@')) {
+        if (currentHunk != null) {
+          hunkBodies.push(currentHunk.join('\n'));
+        }
+        currentHunk = [];
+        const header = HUNK_HEADER_PATTERN.exec(rawLine);
+        oldLine = header == null ? 0 : Number(header[1]);
+        newLine = header == null ? 0 : Number(header[2]);
+        continue;
+      }
+      if (currentHunk == null) {
+        continue;
+      }
+      currentHunk.push(rawLine);
+      // Lines with other markers ('' from the trailing split, '\ No newline'
+      // stubs) belong to the hash but to neither side's line numbering.
+      const marker = rawLine[0];
+      const onDeletions = marker === '-' || marker === ' ';
+      const onAdditions = marker === '+' || marker === ' ';
+      const onRequestedSide = side === 'deletions' ? onDeletions : onAdditions;
+      const lineNumber = side === 'deletions' ? oldLine : newLine;
+      if (matchedHunkIndex === -1 && onRequestedSide && lineNumber === line) {
+        // hunkBodies holds only completed hunks, so its length is the index
+        // the in-progress hunk will get once pushed.
+        matchedHunkIndex = hunkBodies.length;
+        matchedSnippet = rawLine.slice(1);
+      }
+      if (onDeletions) {
+        oldLine += 1;
+      }
+      if (onAdditions) {
+        newLine += 1;
+      }
+    }
+    if (currentHunk != null) {
+      hunkBodies.push(currentHunk.join('\n'));
+    }
+    const body = hunkBodies[matchedHunkIndex];
+    if (matchedHunkIndex === -1 || body == null) {
+      return null;
+    }
+    return {
+      hunkHash: await sha1Hex(`${filePath}\0${body}`),
+      lineSnippet: matchedSnippet,
+    };
+  }
+  return null;
+}
+
 // Splits raw patch text into per-file blocks on `diff --git` boundaries.
 export function splitPatchIntoFileBlocks(patchText: string): string[] {
   const blocks: string[] = [];

@@ -56,7 +56,7 @@ Loopback-only REST, keyed by `?repo=<absolute path>`:
 | ---------------------------------------------- | ------------------------------------------------------------------------------- |
 | `GET /api/state`                               | Full review state (comments + viewed marks)                                     |
 | `GET /api/comments?status=open\|resolved\|all` | List comments                                                                   |
-| `POST /api/comments`                           | Create a comment                                                                |
+| `POST /api/comments`                           | Create a comment (omit `hunkHash` and the server anchors it to the diff)        |
 | `PATCH /api/comments/:id`                      | Edit / resolve (`{"resolved":true,"resolvedBy":"claude","resolutionNote":"…"}`) |
 | `DELETE /api/comments/:id`                     | Delete                                                                          |
 | `PUT /api/viewed`                              | Set/clear viewed marks (hunk- and/or file-level, one call)                      |
@@ -64,8 +64,17 @@ Loopback-only REST, keyed by `?repo=<absolute path>`:
 | `GET /api/diff`                                | The unified diff the viewer renders                                             |
 | `POST /api/contents`                           | Full old/new contents for diffed files (context expansion)                      |
 
-A Claude Code skill for the resolve workflow lives at
-`~/.claude/skills/local-review/SKILL.md` (not part of this repo).
+When `POST /api/comments` is called without a `hunkHash` (the browser always
+sends one), the server locates the hunk covering `range.end` on `side` in the
+current diff and stores its content hash, so agent-posted comments get the
+same Outdated tracking as browser ones. The response carries a `warning` when
+the line isn't part of any hunk — the comment is saved, but the caller should
+re-check its line numbers against `GET /api/diff`.
+
+A Claude Code skill for the agent workflows (resolving comments, posting
+review findings) lives at
+`~/.agents/mayfield-skills/global/local-review/SKILL.md` (not part of this
+repo).
 
 ## Tests
 

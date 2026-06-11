@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  findHunkAnchorInPatch,
   hashFileBlock,
   hashPatchFiles,
   splitPatchIntoFileBlocks,
@@ -125,5 +126,96 @@ describe('hashPatchFiles', () => {
       'img.png',
       'empty.txt',
     ]);
+  });
+});
+
+describe('findHunkAnchorInPatch', () => {
+  test('anchors added and removed lines to their hunk hash', async () => {
+    const { hunkHashes } = await hashFileBlock(FILE_BLOCK);
+
+    const added = await findHunkAnchorInPatch(
+      MULTI_FILE_PATCH,
+      'src/app.ts',
+      'additions',
+      1
+    );
+    expect(added).toEqual({
+      hunkHash: hunkHashes[0],
+      lineSnippet: 'const a = 100;',
+    });
+
+    const removed = await findHunkAnchorInPatch(
+      MULTI_FILE_PATCH,
+      'src/app.ts',
+      'deletions',
+      1
+    );
+    expect(removed).toEqual({
+      hunkHash: hunkHashes[0],
+      lineSnippet: 'const a = 1;',
+    });
+  });
+
+  test('context lines anchor on both sides with per-side numbering', async () => {
+    const { hunkHashes } = await hashFileBlock(FILE_BLOCK_SHIFTED);
+
+    // In FILE_BLOCK_SHIFTED the first hunk starts at old 5 / new 8, so the
+    // trailing context line `const b = 2;` is old 6 / new 9.
+    const onNewSide = await findHunkAnchorInPatch(
+      FILE_BLOCK_SHIFTED,
+      'src/app.ts',
+      'additions',
+      9
+    );
+    const onOldSide = await findHunkAnchorInPatch(
+      FILE_BLOCK_SHIFTED,
+      'src/app.ts',
+      'deletions',
+      6
+    );
+    expect(onNewSide?.lineSnippet).toBe('const b = 2;');
+    expect(onOldSide?.lineSnippet).toBe('const b = 2;');
+    expect(onNewSide?.hunkHash).toBe(hunkHashes[0]);
+  });
+
+  test('finds lines in later hunks', async () => {
+    const { hunkHashes } = await hashFileBlock(FILE_BLOCK);
+    const anchor = await findHunkAnchorInPatch(
+      FILE_BLOCK,
+      'src/app.ts',
+      'additions',
+      11
+    );
+    expect(anchor).toEqual({
+      hunkHash: hunkHashes[1],
+      lineSnippet: 'const d = 4;',
+    });
+  });
+
+  test('returns null for lines and files outside the patch', async () => {
+    expect(
+      await findHunkAnchorInPatch(
+        MULTI_FILE_PATCH,
+        'src/app.ts',
+        'additions',
+        999
+      )
+    ).toBeNull();
+    // Line 11 only exists on the additions side of the second hunk.
+    expect(
+      await findHunkAnchorInPatch(
+        MULTI_FILE_PATCH,
+        'src/app.ts',
+        'deletions',
+        11
+      )
+    ).toBeNull();
+    expect(
+      await findHunkAnchorInPatch(MULTI_FILE_PATCH, 'nope.ts', 'additions', 1)
+    ).toBeNull();
+    // img.png is in the patch but has no hunks.
+    expect(
+      await findHunkAnchorInPatch(MULTI_FILE_PATCH, 'img.png', 'additions', 1)
+    ).toBeNull();
   });
 });

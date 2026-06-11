@@ -12,6 +12,7 @@ import { RecentRepoScopeLinks } from './RecentRepoScopeLinks';
 import { RepoReviewForm } from './RepoReviewForm';
 import { listRecentRepoGroups, type RecentRepoGroup } from '@/lib/recentRepos';
 import type { ThreadCounts } from '@/lib/store';
+import { cn } from '@/lib/utils';
 
 export async function RepoHome() {
   const recentRepos = await listRecentRepoGroups();
@@ -78,7 +79,10 @@ function RecentRepoCard({ repo }: { repo: RecentRepoGroup }) {
             <FolderGit2 className="text-muted-foreground size-4 shrink-0" />
             <h3 className="truncate text-sm font-semibold">{repo.name}</h3>
           </div>
-          <p className="text-muted-foreground mt-1 truncate font-mono text-xs">
+          <p
+            className="text-muted-foreground mt-1 truncate font-mono text-xs"
+            title={repo.path}
+          >
             {repo.path}
           </p>
         </div>
@@ -93,32 +97,44 @@ function RecentRepoCard({ repo }: { repo: RecentRepoGroup }) {
         {repo.worktrees.map((worktree) => (
           <div
             key={worktree.path}
-            className="hover:bg-accent/50 grid min-h-14 gap-3 px-4 py-3 transition sm:grid-cols-[minmax(0,1fr)_auto]"
+            className="hover:bg-accent/50 flex flex-col gap-2 px-4 py-3 transition"
           >
             <Link
-              className="group focus-visible:ring-ring/50 min-w-0 rounded-sm focus-visible:ring-2 focus-visible:outline-none"
+              className="group focus-visible:ring-ring/50 block min-w-0 rounded-sm focus-visible:ring-2 focus-visible:outline-none"
               href={{ pathname: '/review', query: { repo: worktree.path } }}
               prefetch={false}
             >
               <div className="flex min-w-0 items-center gap-2">
                 <GitBranch className="text-muted-foreground size-4 shrink-0" />
-                <span className="truncate text-sm font-medium">
+                <span
+                  className="truncate text-sm font-medium"
+                  title={worktree.branch}
+                >
                   {worktree.branch}
                 </span>
                 {worktree.isDetached ? (
-                  <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[11px]">
+                  <span className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 text-[11px]">
                     detached
                   </span>
                 ) : null}
                 <ArrowRight className="text-muted-foreground group-hover:text-foreground ml-auto size-4 shrink-0 transition group-hover:translate-x-0.5" />
               </div>
-              <p className="text-muted-foreground mt-1 truncate font-mono text-xs">
-                {worktree.path}
-              </p>
+              {/* The main worktree's path is already shown in the card header. */}
+              {worktree.path === repo.path ? null : (
+                <p
+                  className="text-muted-foreground mt-1 truncate font-mono text-xs"
+                  title={worktree.path}
+                >
+                  {worktree.path}
+                </p>
+              )}
             </Link>
-            <div className="flex min-w-0 flex-col gap-2 text-xs sm:items-end">
-              <ThreadCountsInline counts={worktree.threadCounts} />
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
               <RecentRepoScopeLinks repoPath={worktree.path} />
+              <ThreadCountsInline
+                className="ml-auto"
+                counts={worktree.threadCounts}
+              />
             </div>
           </div>
         ))}
@@ -127,9 +143,20 @@ function RecentRepoCard({ repo }: { repo: RecentRepoGroup }) {
   );
 }
 
-function ThreadCountsInline({ counts }: { counts: ThreadCounts }) {
+function ThreadCountsInline({
+  counts,
+  className,
+}: {
+  counts: ThreadCounts;
+  className?: string;
+}) {
   return (
-    <div className="text-muted-foreground flex flex-wrap items-center gap-2">
+    <div
+      className={cn(
+        'text-muted-foreground flex flex-wrap items-center gap-2',
+        className
+      )}
+    >
       <span
         className="inline-flex items-center gap-1"
         title={`${counts.unresolved} unresolved threads`}

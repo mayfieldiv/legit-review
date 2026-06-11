@@ -107,7 +107,7 @@ export function RecentRepoScopeLinks({ repoPath }: { repoPath: string }) {
   const options = scopes?.options ?? (failed ? ERROR_OPTIONS : LOADING_OPTIONS);
 
   return (
-    <div className="flex flex-wrap gap-1.5 sm:justify-end">
+    <div className="flex flex-wrap gap-1.5">
       {options.map((option) =>
         option.available ? (
           <Link

@@ -101,6 +101,23 @@ describe('computeEstimatedDiffHeights', () => {
     });
   });
 
+  test('accounts for hunk separator slots before a hunk at the start of a file', () => {
+    const fileDiff = parseDiffFromFile(
+      { name: 'top.ts', contents: 'old\n' },
+      { name: 'top.ts', contents: 'new\n' }
+    );
+
+    expect(
+      compute(fileDiff, {
+        hunkSeparators: 'line-info-basic',
+        hunkSeparatorSlots: true,
+      })
+    ).toEqual({
+      splitHeight: 76,
+      unifiedHeight: 86,
+    });
+  });
+
   test('accounts for collapsed leading and trailing line-info separators', () => {
     const fileDiff = createTwoHunkDiff();
 

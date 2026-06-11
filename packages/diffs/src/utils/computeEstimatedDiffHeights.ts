@@ -22,6 +22,7 @@ export interface ComputeEstimatedDiffHeightsOptions {
   metrics: VirtualFileMetrics;
   disableFileHeader: boolean;
   hunkSeparators: HunkSeparators;
+  hunkSeparatorSlots?: boolean;
   expandUnchanged: boolean;
   expandedHunks: Map<number, HunkExpansionRegion> | true | undefined;
   collapsedContextThreshold: number;
@@ -39,6 +40,7 @@ export function computeEstimatedDiffHeights({
   metrics,
   disableFileHeader,
   hunkSeparators,
+  hunkSeparatorSlots = false,
   expandUnchanged,
   expandedHunks: configuredExpandedHunks,
   collapsedContextThreshold,
@@ -66,7 +68,13 @@ export function computeEstimatedDiffHeights({
     splitHeight += leadingExpandedHeight;
     unifiedHeight += leadingExpandedHeight;
 
-    if (leadingRegion.collapsedLines > 0) {
+    const shouldCountLeadingSeparator =
+      leadingRegion.collapsedLines > 0 ||
+      (hunkSeparatorSlots &&
+        (hunkSeparators === 'line-info' ||
+          hunkSeparators === 'line-info-basic' ||
+          hunkSeparators === 'custom'));
+    if (shouldCountLeadingSeparator) {
       const separatorHeight =
         getLeadingHunkSeparatorLayout({
           type: hunkSeparators,

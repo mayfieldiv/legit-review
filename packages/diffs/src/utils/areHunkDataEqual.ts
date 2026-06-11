@@ -3,6 +3,7 @@ import type { HunkData } from '../types';
 export function areHunkDataEqual(hunkA: HunkData, hunkB: HunkData): boolean {
   return (
     hunkA.slotName === hunkB.slotName &&
+    hunkA.hunkSlot === hunkB.hunkSlot &&
     hunkA.hunkIndex === hunkB.hunkIndex &&
     hunkA.lines === hunkB.lines &&
     hunkA.type === hunkB.type &&

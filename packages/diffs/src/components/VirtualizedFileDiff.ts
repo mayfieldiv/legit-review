@@ -757,6 +757,7 @@ export class VirtualizedFileDiff<
       metrics: this.metrics,
       disableFileHeader,
       hunkSeparators: this.getHunkSeparatorType(),
+      hunkSeparatorSlots: this.options.hunkSeparatorSlots,
       expandUnchanged,
       expandedHunks: this.hunksRenderer.getExpandedHunksMap(),
       collapsedContextThreshold,
@@ -1572,6 +1573,8 @@ function hasDiffLayoutOptionChanged<LAnnotation>(
       (nextOptions.diffIndicators ?? 'bars') ||
     (previousOptions.hunkSeparators ?? 'line-info') !==
       (nextOptions.hunkSeparators ?? 'line-info') ||
+    (previousOptions.hunkSeparatorSlots ?? false) !==
+      (nextOptions.hunkSeparatorSlots ?? false) ||
     (previousOptions.expandUnchanged ?? false) !==
       (nextOptions.expandUnchanged ?? false) ||
     (previousOptions.collapsedContextThreshold ??
@@ -1591,6 +1594,8 @@ function hasDiffEstimateOptionChanged<LAnnotation>(
       (nextOptions.disableFileHeader ?? false) ||
     (previousOptions.hunkSeparators ?? 'line-info') !==
       (nextOptions.hunkSeparators ?? 'line-info') ||
+    (previousOptions.hunkSeparatorSlots ?? false) !==
+      (nextOptions.hunkSeparatorSlots ?? false) ||
     (previousOptions.expandUnchanged ?? false) !==
       (nextOptions.expandUnchanged ?? false) ||
     (previousOptions.collapsedContextThreshold ??

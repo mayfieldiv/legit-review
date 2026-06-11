@@ -5,6 +5,7 @@ import {
   type CodeViewOptions,
   type DiffIndicators,
   type DiffLineAnnotation,
+  type HunkData,
   type LineAnnotation,
   type SelectedLineRange,
   type ThemeTypes,
@@ -32,6 +33,7 @@ import type {
   CommentAnnotation,
   CommentMetadata,
   DraftCommentMetadata,
+  HunkViewedState,
   PersistCommentInput,
   SavedCommentMetadata,
 } from './types';
@@ -89,6 +91,10 @@ interface ActiveDraftComment {
 interface CodeViewWrapperProps {
   className?: string;
   diffStyle: 'split' | 'unified';
+  getHunkViewedState(
+    itemId: string,
+    hunkIndex: number
+  ): HunkViewedState | undefined;
   isFileViewed(itemId: string): boolean;
   onCommentDeleted(comment: CodeViewDeletedCommentEvent): void;
   onCommentSaved(comment: CodeViewSavedCommentEvent): void;
@@ -122,6 +128,7 @@ interface CodeViewWrapperProps {
 export const CodeViewWrapper = memo(function CodeViewWrapper({
   className,
   diffStyle,
+  getHunkViewedState,
   isFileViewed,
   onCommentDeleted,
   onCommentSaved,
@@ -418,19 +425,6 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
         | LineAnnotation<CommentMetadata>,
       item: CodeViewItem<CommentMetadata>
     ) => {
-      if (annotation.metadata.kind === 'hunk-viewed') {
-        if (item.type !== 'diff') {
-          return null;
-        }
-        const { hunkHash, viewed } = annotation.metadata;
-        return (
-          <HunkViewedPill
-            viewed={viewed}
-            onToggle={() => onToggleHunkViewed(item.id, hunkHash, !viewed)}
-          />
-        );
-      }
-
       if (isDraftAnnotation(annotation)) {
         return (
           <DraftAnnotation
@@ -457,6 +451,30 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
           onReply={onReplyToComment}
           onToggleResolved={onToggleResolved}
           onToggleSelection={handleToggleCommentSelection}
+        />
+      );
+    }
+  );
+
+  const renderHunkSeparator = useStableCallback(
+    (hunk: HunkData, item: CodeViewItem<CommentMetadata>) => {
+      if (item.type !== 'diff' || !shouldRenderHunkViewedPill(hunk, item)) {
+        return null;
+      }
+      const viewedState = getHunkViewedState(item.id, hunk.hunkIndex);
+      if (viewedState == null) {
+        return null;
+      }
+      return (
+        <HunkViewedPill
+          viewed={viewedState.viewed}
+          onToggle={() =>
+            onToggleHunkViewed(
+              item.id,
+              viewedState.hunkHash,
+              !viewedState.viewed
+            )
+          }
         />
       );
     }
@@ -552,11 +570,28 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
       selectedLines={selectedLines}
       onSelectedLinesChange={handleSetSelection}
       renderAnnotation={renderCommentAnnotation}
+      renderHunkSeparator={renderHunkSeparator}
       renderHeaderMetadata={renderHeaderMetadata}
       renderHeaderPrefix={renderHeaderPrefix}
     />
   );
 });
+
+function shouldRenderHunkViewedPill(
+  hunk: HunkData,
+  item: CodeViewItem<CommentMetadata>
+): boolean {
+  if (item.type !== 'diff') {
+    return false;
+  }
+  if (hunk.type === 'unified') {
+    return true;
+  }
+  if (item.fileDiff.type === 'deleted') {
+    return hunk.type === 'deletions';
+  }
+  return hunk.type === 'additions';
+}
 
 const ANNOTATION_THEME_STYLE_KEYS = [
   '--diffshub-annotation-bg',

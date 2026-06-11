@@ -289,6 +289,7 @@ describe('CodeView element pooling', () => {
       hasAnnotationRenderer: false,
       hasGutterRenderer: false,
       hasHeaderRenderers: true,
+      hasHunkSeparatorRenderer: false,
       onSnapshotChange() {},
     };
 

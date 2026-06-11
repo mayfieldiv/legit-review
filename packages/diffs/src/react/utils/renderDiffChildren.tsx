@@ -6,7 +6,7 @@ import {
   HEADER_PREFIX_SLOT_ID,
 } from '../../constants';
 import type { GetHoveredLineResult } from '../../managers/InteractionManager';
-import type { FileDiffMetadata } from '../../types';
+import type { FileDiffMetadata, HunkData } from '../../types';
 import { getLineAnnotationName } from '../../utils/getLineAnnotationName';
 import { getMergeConflictActionSlotName } from '../../utils/getMergeConflictActionSlotName';
 import {
@@ -24,6 +24,8 @@ interface RenderDiffChildrenProps<LAnnotation, T> {
   renderHeaderMetadata: DiffBasePropsReact<LAnnotation>['renderHeaderMetadata'];
   renderAnnotation: DiffBasePropsReact<LAnnotation>['renderAnnotation'];
   renderGutterUtility: DiffBasePropsReact<LAnnotation>['renderGutterUtility'];
+  hunkData?: readonly HunkData[];
+  renderHunkSeparator?(hunk: HunkData): ReactNode;
   renderMergeConflictUtility?(
     action: MergeConflictDiffAction,
     getInstance: () => T | undefined
@@ -41,6 +43,8 @@ export function renderDiffChildren<LAnnotation, T>({
   renderHeaderMetadata,
   renderAnnotation,
   renderGutterUtility,
+  hunkData,
+  renderHunkSeparator,
   renderMergeConflictUtility,
   lineAnnotations,
   getHoveredLine,
@@ -67,6 +71,14 @@ export function renderDiffChildren<LAnnotation, T>({
             {renderAnnotation(annotation)}
           </div>
         ))}
+      {renderHunkSeparator != null &&
+        hunkData
+          ?.filter((hunk) => hunk.hunkSlot === true)
+          .map((hunk) => (
+            <div key={hunk.slotName} slot={hunk.slotName}>
+              {renderHunkSeparator(hunk)}
+            </div>
+          ))}
       {actions != null &&
         renderMergeConflictUtility != null &&
         getInstance != null &&

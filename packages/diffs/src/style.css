@@ -999,6 +999,12 @@
     height: 100%;
   }
 
+  [data-separator-slot] {
+    display: flex;
+    align-items: center;
+    margin-inline-start: auto;
+  }
+
   [data-content] [data-separator-wrapper] {
     display: none;
   }

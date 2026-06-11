@@ -95,12 +95,14 @@ interface PushSeparatorProps {
   isFirstHunk: boolean;
   isLastHunk: boolean;
   isExpandable: boolean;
+  includeHunkSlot: boolean;
 }
 
 interface ProcessContext {
   rowCount: number;
   expansionLineCount: number;
   expansionLineLabels: boolean;
+  hunkSeparatorSlots: boolean;
   hunkSeparators: HunkSeparators;
   unifiedContentAST: ElementContent[];
   deletionsContentAST: ElementContent[];
@@ -356,6 +358,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       expansionLineCount = 100,
       expansionLineLabels = false,
       hunkSeparators = 'line-info',
+      hunkSeparatorSlots = false,
       lineDiffType = 'word-alt',
       maxLineDiffLength = 1000,
       overflow = 'scroll',
@@ -380,6 +383,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       expansionLineCount,
       expansionLineLabels,
       hunkSeparators,
+      hunkSeparatorSlots,
       lineDiffType,
       maxLineDiffLength,
       overflow,
@@ -737,6 +741,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       expansionLineLabels,
       collapsedContextThreshold,
       hunkSeparators,
+      hunkSeparatorSlots,
     } = this.getOptionsWithDefaults();
 
     this.diff = fileDiff;
@@ -759,6 +764,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       additionsGutterAST: createGutterWrapper(),
       expansionLineCount,
       expansionLineLabels,
+      hunkSeparatorSlots,
       hunkData,
       incrementRowCount(count = 1) {
         context.rowCount += count;
@@ -864,12 +870,17 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
           additionLine != null
             ? additionLine.unifiedLineIndex
             : deletionLine.unifiedLineIndex;
+        const isHunkBodyStart =
+          hunk != null &&
+          (diffStyle === 'unified'
+            ? unifiedLineIndex === hunk.unifiedLineStart
+            : splitLineIndex === hunk.splitLineStart);
 
         if (diffStyle === 'split' && type !== 'change') {
           pendingSplitContext.flush();
         }
 
-        if (collapsedBefore > 0) {
+        if (collapsedBefore > 0 || (hunkSeparatorSlots && isHunkBodyStart)) {
           pushSeparators({
             hunkIndex,
             collapsedLines: collapsedBefore,
@@ -878,6 +889,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
             isFirstHunk: hunkIndex === 0,
             isLastHunk: false,
             isExpandable: !fileDiff.isPartial,
+            includeHunkSlot: isHunkBodyStart,
           });
         }
 
@@ -1175,6 +1187,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
             isFirstHunk: false,
             isLastHunk: true,
             isExpandable: !fileDiff.isPartial,
+            includeHunkSlot: false,
           });
         }
         context.incrementRowCount(1);
@@ -1560,10 +1573,17 @@ function pushSeparator(
     isFirstHunk,
     isLastHunk,
     isExpandable,
+    includeHunkSlot,
   }: PushSeparatorProps,
   context: ProcessContext
 ) {
-  if (collapsedLines <= 0) {
+  const shouldRenderHunkSlot =
+    context.hunkSeparatorSlots &&
+    includeHunkSlot &&
+    (context.hunkSeparators === 'line-info' ||
+      context.hunkSeparators === 'line-info-basic' ||
+      context.hunkSeparators === 'custom');
+  if (collapsedLines <= 0 && !shouldRenderHunkSlot) {
     return;
   }
   const linesAST =
@@ -1614,16 +1634,20 @@ function pushSeparator(
     return;
   }
   const slotName = getHunkSeparatorSlotName(type, hunkIndex);
-  const chunked = rangeSize > context.expansionLineCount;
-  const expandIndex = isExpandable ? hunkIndex : undefined;
+  const separatorSlotName = shouldRenderHunkSlot ? slotName : undefined;
+  const chunked = collapsedLines > 0 && rangeSize > context.expansionLineCount;
+  const expandIndex =
+    collapsedLines > 0 && isExpandable ? hunkIndex : undefined;
+  const content =
+    collapsedLines > 0 ? getModifiedLinesString(collapsedLines) : undefined;
   context.pushToGutter(
     type,
     createSeparator({
       type: context.hunkSeparators,
-      content: getModifiedLinesString(collapsedLines),
+      content,
       expandIndex,
       chunked,
-      slotName,
+      slotName: separatorSlotName,
       isFirstHunk,
       isLastHunk,
       labeled: context.expansionLineLabels,
@@ -1634,10 +1658,10 @@ function pushSeparator(
   linesAST.push(
     createSeparator({
       type: context.hunkSeparators,
-      content: getModifiedLinesString(collapsedLines),
+      content,
       expandIndex,
       chunked,
-      slotName,
+      slotName: separatorSlotName,
       isFirstHunk,
       isLastHunk,
       labeled: context.expansionLineLabels,
@@ -1650,6 +1674,7 @@ function pushSeparator(
   }
   context.hunkData.push({
     slotName,
+    ...(shouldRenderHunkSlot ? { hunkSlot: true } : {}),
     hunkIndex,
     lines: collapsedLines,
     type,

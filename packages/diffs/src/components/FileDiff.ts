@@ -203,6 +203,7 @@ export class FileDiff<LAnnotation = undefined> {
   protected headerMetadata: HTMLElement | undefined;
   protected headerCustom: HTMLElement | undefined;
   protected separatorCache: Map<string, CustomHunkElementCache> = new Map();
+  protected renderedHunkData: HunkData[] = [];
   protected errorWrapper: HTMLElement | undefined;
   protected placeHolder: HTMLElement | undefined;
 
@@ -903,6 +904,7 @@ export class FileDiff<LAnnotation = undefined> {
           this.pre.remove();
           this.pre = undefined;
         }
+        this.renderedHunkData = hunksResult.hunkData;
         this.renderSeparators(hunksResult.hunkData);
       }
 
@@ -1076,7 +1078,12 @@ export class FileDiff<LAnnotation = undefined> {
 
     this.lastRenderedHeaderHTML = undefined;
     this.lastRowCount = undefined;
+    this.renderedHunkData = [];
     this.mounted = false;
+  }
+
+  public getRenderedHunkData(): readonly HunkData[] {
+    return this.renderedHunkData;
   }
 
   private renderSeparators(hunkData: HunkData[]): void {

@@ -100,6 +100,16 @@ function createLabeledExpandButtons({
   return buttons;
 }
 
+function createSeparatorSlot(slotName: string): HASTElement {
+  return createHastElement({
+    tagName: 'slot',
+    properties: {
+      name: slotName,
+      'data-separator-slot': '',
+    },
+  });
+}
+
 export function createSeparator({
   type,
   content,
@@ -129,14 +139,18 @@ export function createSeparator({
     (type === 'line-info' || type === 'line-info-basic') &&
     useLabeledButtons
   ) {
+    const contentChildren = createLabeledExpandButtons({
+      collapsedLines,
+      expansionLineCount,
+      isLastHunk,
+    });
+    if (slotName != null) {
+      contentChildren.push(createSeparatorSlot(slotName));
+    }
     children.push(
       createHastElement({
         tagName: 'div',
-        children: createLabeledExpandButtons({
-          collapsedLines,
-          expansionLineCount,
-          isLastHunk,
-        }),
+        children: contentChildren,
         properties: {
           'data-separator-wrapper': '',
           'data-separator-labeled': '',
@@ -145,7 +159,7 @@ export function createSeparator({
     );
   } else if (
     (type === 'line-info' || type === 'line-info-basic') &&
-    content != null
+    (content != null || slotName != null)
   ) {
     const contentChildren: ElementContent[] = [];
     if (expandIndex != null) {
@@ -167,19 +181,21 @@ export function createSeparator({
         }
       }
     }
-    contentChildren.push(
-      createHastElement({
-        tagName: 'div',
-        children: [
-          createHastElement({
-            tagName: 'span',
-            children: [createTextNodeElement(content)],
-            properties: { 'data-unmodified-lines': '' },
-          }),
-        ],
-        properties: { 'data-separator-content': '' },
-      })
-    );
+    if (content != null) {
+      contentChildren.push(
+        createHastElement({
+          tagName: 'div',
+          children: [
+            createHastElement({
+              tagName: 'span',
+              children: [createTextNodeElement(content)],
+              properties: { 'data-unmodified-lines': '' },
+            }),
+          ],
+          properties: { 'data-separator-content': '' },
+        })
+      );
+    }
     if (chunked && expandIndex != null) {
       contentChildren.push(
         createHastElement({
@@ -193,6 +209,9 @@ export function createSeparator({
         })
       );
     }
+    if (slotName != null) {
+      contentChildren.push(createSeparatorSlot(slotName));
+    }
     children.push(
       createHastElement({
         tagName: 'div',
@@ -205,12 +224,7 @@ export function createSeparator({
     );
   }
   if (type === 'custom' && slotName != null) {
-    children.push(
-      createHastElement({
-        tagName: 'slot',
-        properties: { name: slotName },
-      })
-    );
+    children.push(createSeparatorSlot(slotName));
   }
   return createHastElement({
     tagName: 'div',

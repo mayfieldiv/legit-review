@@ -395,6 +395,8 @@ export interface BaseDiffOptions extends BaseCodeOptions {
   diffIndicators?: DiffIndicators; // bars is default
   disableBackground?: boolean;
   hunkSeparators?: HunkSeparators; // line-info is default
+  /** Reserve hunk separator slots for framework-managed hunk controls. */
+  hunkSeparatorSlots?: boolean;
   expandUnchanged?: boolean; // false is default
   // Auto-expand collapsed context at or below this size.
   collapsedContextThreshold?: number; // 2 is default
@@ -660,6 +662,8 @@ export type CodeColumnType = 'unified' | 'additions' | 'deletions';
 
 export interface HunkData {
   slotName: string;
+  /** True when this entry has a renderer-emitted hunk-control slot. */
+  hunkSlot?: boolean;
   hunkIndex: number;
   lines: number;
   type: CodeColumnType;

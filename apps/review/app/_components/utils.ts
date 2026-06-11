@@ -17,6 +17,7 @@ import type {
   CommentLineType,
   CommentMetadata,
   DraftCommentMetadata,
+  HunkViewedState,
   SavedCommentMetadata,
 } from './types';
 
@@ -65,30 +66,6 @@ export function getFileContentsLine(
     : undefined;
 }
 
-// Where a hunk's "Viewed" pill is anchored: the hunk's last rendered line.
-// Pure-deletion hunks have no addition lines, so the pill sits on the
-// deletions side there.
-export function getHunkViewedAnchor(hunk: {
-  additionStart: number;
-  additionCount: number;
-  deletionStart: number;
-  deletionCount: number;
-}): { side: AnnotationSide; lineNumber: number } | undefined {
-  if (hunk.additionCount > 0) {
-    return {
-      side: 'additions',
-      lineNumber: hunk.additionStart + hunk.additionCount - 1,
-    };
-  }
-  if (hunk.deletionCount > 0) {
-    return {
-      side: 'deletions',
-      lineNumber: hunk.deletionStart + hunk.deletionCount - 1,
-    };
-  }
-  return undefined;
-}
-
 // A file counts as viewed when its file-level mark matches the current file
 // hash, or when every hunk in the current diff is individually marked viewed.
 export function computeFileViewed(
@@ -106,6 +83,24 @@ export function computeFileViewed(
   }
   const viewed = new Set(viewedHunks[filePath] ?? []);
   return hunkHashes.every((hash) => viewed.has(hash));
+}
+
+export function computeHunkViewedState(
+  viewedFiles: Record<string, string>,
+  viewedHunks: Record<string, string[]>,
+  filePath: string,
+  fileHash: string,
+  hunkHash: string | undefined
+): HunkViewedState | undefined {
+  if (hunkHash == null) {
+    return undefined;
+  }
+  return {
+    hunkHash,
+    viewed:
+      viewedFiles[filePath] === fileHash ||
+      (viewedHunks[filePath] ?? []).includes(hunkHash),
+  };
 }
 
 // Finds the index of the hunk containing the given 1-based line on a diff

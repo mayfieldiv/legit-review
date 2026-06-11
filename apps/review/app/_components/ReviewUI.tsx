@@ -132,6 +132,7 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
     diffStats,
     errorMessage,
     getFileHunkHashes,
+    getHunkViewedState,
     initialItems,
     isFileViewed,
     loadState,
@@ -623,6 +624,7 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
             themeType={colorMode}
             viewerRef={viewerRef}
             initialItems={initialItems}
+            getHunkViewedState={getHunkViewedState}
             isFileViewed={isFileViewed}
             onCommentDeleted={handleCommentDeleted}
             onCommentSaved={handleCommentSaved}

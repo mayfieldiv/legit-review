@@ -21,6 +21,7 @@ import {
   areOptionsEqual,
   CodeView as CodeViewClass,
   type CodeViewCoordinator,
+  type CodeViewDiffItem,
   type CodeViewItem,
   type CodeViewLineSelection,
   type CodeViewOptions,
@@ -28,6 +29,7 @@ import {
   type CodeViewScrollTarget,
   type DiffLineAnnotation,
   type GetHoveredLineResult,
+  type HunkData,
   type LineAnnotation,
 } from '../index';
 import { areManagedSnapshotsEqual } from '../utils/areManagedSnapshotsEqual';
@@ -58,6 +60,10 @@ interface CodeViewBaseProps<LAnnotation> {
   renderAnnotation?(
     annotation: LineAnnotation<LAnnotation> | DiffLineAnnotation<LAnnotation>,
     item: CodeViewItem<LAnnotation>
+  ): ReactNode;
+  renderHunkSeparator?(
+    hunk: HunkData,
+    item: CodeViewDiffItem<LAnnotation>
   ): ReactNode;
   renderGutterUtility?(
     getHoveredLine: CodeViewGutterUtilityGetter,
@@ -153,6 +159,7 @@ function CodeViewInner<LAnnotation = undefined>(
     renderGutterUtility,
     renderHeaderMetadata,
     renderHeaderPrefix,
+    renderHunkSeparator,
     selectedLines,
     style,
   } = props;
@@ -164,12 +171,16 @@ function CodeViewInner<LAnnotation = undefined>(
   const hasCustomHeader = renderCustomHeader != null;
   const hasAnnotationRenderer = renderAnnotation != null;
   const hasGutterRenderer = renderGutterUtility != null;
+  const hasHunkSeparatorRenderer = renderHunkSeparator != null;
   const hasHeaderRenderers =
     hasCustomHeader ||
     renderHeaderPrefix != null ||
     renderHeaderMetadata != null;
   const hasRenderers =
-    hasHeaderRenderers || hasAnnotationRenderer || hasGutterRenderer;
+    hasHeaderRenderers ||
+    hasAnnotationRenderer ||
+    hasGutterRenderer ||
+    hasHunkSeparatorRenderer;
   const emitSelectedLinesChange = useStableCallback(
     (selection: CodeViewLineSelection | null) => {
       onSelectedLinesChange?.(selection);
@@ -183,6 +194,7 @@ function CodeViewInner<LAnnotation = undefined>(
         options,
         hasCustomHeader,
         hasGutterRenderer,
+        hasHunkSeparatorRenderer,
         onSelectedLinesChange:
           onSelectedLinesChange != null ? emitSelectedLinesChange : undefined,
         controlledSelection,
@@ -191,6 +203,7 @@ function CodeViewInner<LAnnotation = undefined>(
       options,
       hasCustomHeader,
       hasGutterRenderer,
+      hasHunkSeparatorRenderer,
       onSelectedLinesChange,
       emitSelectedLinesChange,
       controlledSelection,
@@ -253,13 +266,19 @@ function CodeViewInner<LAnnotation = undefined>(
 
   const slotCoordinator: CodeViewCoordinator<LAnnotation> | undefined =
     useMemo(() => {
-      if (!hasHeaderRenderers && !hasAnnotationRenderer && !hasGutterRenderer) {
+      if (
+        !hasHeaderRenderers &&
+        !hasAnnotationRenderer &&
+        !hasGutterRenderer &&
+        !hasHunkSeparatorRenderer
+      ) {
         return undefined;
       } else {
         return {
           hasHeaderRenderers,
           hasAnnotationRenderer,
           hasGutterRenderer,
+          hasHunkSeparatorRenderer,
           onSnapshotChange,
         };
       }
@@ -268,6 +287,7 @@ function CodeViewInner<LAnnotation = undefined>(
       hasAnnotationRenderer,
       hasGutterRenderer,
       hasHeaderRenderers,
+      hasHunkSeparatorRenderer,
     ]);
 
   useIsometricEffect(() => {
@@ -475,6 +495,7 @@ function CodeViewInner<LAnnotation = undefined>(
           renderHeaderPrefix={renderHeaderPrefix}
           renderHeaderMetadata={renderHeaderMetadata}
           renderAnnotation={renderAnnotation}
+          renderHunkSeparator={renderHunkSeparator}
           renderGutterUtility={renderGutterUtility}
         />
       )}
@@ -569,6 +590,7 @@ interface CreateManagedCodeViewOptionsProps<LAnnotation> {
   options: CodeViewOptions<LAnnotation> | undefined;
   hasCustomHeader: boolean;
   hasGutterRenderer: boolean;
+  hasHunkSeparatorRenderer: boolean;
   onSelectedLinesChange?(selection: CodeViewLineSelection | null): void;
   controlledSelection: boolean;
 }
@@ -577,6 +599,7 @@ function createManagedCodeViewOptions<LAnnotation>({
   options,
   hasCustomHeader,
   hasGutterRenderer,
+  hasHunkSeparatorRenderer,
   onSelectedLinesChange,
   controlledSelection,
 }: CreateManagedCodeViewOptionsProps<LAnnotation>):
@@ -585,6 +608,7 @@ function createManagedCodeViewOptions<LAnnotation>({
   if (
     !hasCustomHeader &&
     !hasGutterRenderer &&
+    !hasHunkSeparatorRenderer &&
     onSelectedLinesChange == null &&
     !controlledSelection
   ) {
@@ -607,6 +631,10 @@ function createManagedCodeViewOptions<LAnnotation>({
     options.renderGutterUtility = noopRender;
   }
 
+  if (hasHunkSeparatorRenderer) {
+    options.hunkSeparatorSlots = true;
+  }
+
   return options;
 }
 
@@ -616,6 +644,7 @@ interface RenderCodeViewItemChildrenProps<LAnnotation> {
   renderHeaderPrefix: CodeViewBaseProps<LAnnotation>['renderHeaderPrefix'];
   renderHeaderMetadata: CodeViewBaseProps<LAnnotation>['renderHeaderMetadata'];
   renderAnnotation: CodeViewBaseProps<LAnnotation>['renderAnnotation'];
+  renderHunkSeparator: CodeViewBaseProps<LAnnotation>['renderHunkSeparator'];
   renderGutterUtility: CodeViewBaseProps<LAnnotation>['renderGutterUtility'];
 }
 
@@ -625,6 +654,7 @@ interface SlotPortalsProps<LAnnotation> {
   renderHeaderPrefix: CodeViewBaseProps<LAnnotation>['renderHeaderPrefix'];
   renderHeaderMetadata: CodeViewBaseProps<LAnnotation>['renderHeaderMetadata'];
   renderAnnotation: CodeViewBaseProps<LAnnotation>['renderAnnotation'];
+  renderHunkSeparator: CodeViewBaseProps<LAnnotation>['renderHunkSeparator'];
   renderGutterUtility: CodeViewBaseProps<LAnnotation>['renderGutterUtility'];
 }
 
@@ -634,6 +664,7 @@ const SlotPortals = memo(function SlotPortals<LAnnotation>({
   renderHeaderPrefix,
   renderHeaderMetadata,
   renderAnnotation,
+  renderHunkSeparator,
   renderGutterUtility,
 }: SlotPortalsProps<LAnnotation>) {
   const subscribe = useStableCallback((listener: () => void) =>
@@ -653,6 +684,7 @@ const SlotPortals = memo(function SlotPortals<LAnnotation>({
         renderHeaderPrefix,
         renderHeaderMetadata,
         renderAnnotation,
+        renderHunkSeparator,
         renderGutterUtility,
       }),
       renderedItem.element,
@@ -667,6 +699,7 @@ function renderCodeViewItemChildren<LAnnotation>({
   renderHeaderPrefix,
   renderHeaderMetadata,
   renderAnnotation,
+  renderHunkSeparator,
   renderGutterUtility,
 }: RenderCodeViewItemChildrenProps<LAnnotation>): ReactNode {
   if (renderedItem.type === 'diff') {
@@ -685,6 +718,11 @@ function renderCodeViewItemChildren<LAnnotation>({
         renderAnnotation != null
           ? (annotation) => renderAnnotation(annotation, item)
           : undefined,
+      renderHunkSeparator:
+        renderHunkSeparator != null
+          ? (hunk) => renderHunkSeparator(hunk, item)
+          : undefined,
+      hunkData: instance.getRenderedHunkData(),
       lineAnnotations: item.annotations,
       renderGutterUtility:
         renderGutterUtility != null

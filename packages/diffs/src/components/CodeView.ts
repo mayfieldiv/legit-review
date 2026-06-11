@@ -26,6 +26,7 @@ import type {
   CodeViewRangeScrollTarget,
   CodeViewScrollBehavior,
   CodeViewScrollTarget,
+  HunkData,
   HunkSeparators,
   PendingCodeViewLayoutReset,
   SelectedLineRange,
@@ -131,6 +132,7 @@ export interface CodeViewRenderedDiffItem<LAnnotation> {
   type: 'diff';
   item: CodeViewDiffItem<LAnnotation>;
   version: number | undefined;
+  hunkDataSignature: string;
   element: HTMLElement;
   instance: VirtualizedFileDiff<LAnnotation>;
 }
@@ -157,6 +159,7 @@ export interface CodeViewCoordinator<LAnnotation> {
   hasHeaderRenderers: boolean;
   hasAnnotationRenderer: boolean;
   hasGutterRenderer: boolean;
+  hasHunkSeparatorRenderer: boolean;
   onSnapshotChange(
     snapshot: CodeViewRenderedItem<LAnnotation>[] | undefined
   ): void;
@@ -250,6 +253,7 @@ const CODE_VIEW_DIFF_OPTION_KEYS = [
   'maxLineDiffLength',
   'expansionLineCount',
   'expansionLineLabels',
+  'hunkSeparatorSlots',
   'lineHoverHighlight',
   'enableTokenInteractionsOnWhitespace',
   'enableGutterUtility',
@@ -1438,6 +1442,9 @@ export class CodeView<LAnnotation = undefined> {
           type: 'diff',
           item: item.item,
           version: item.version,
+          hunkDataSignature: getHunkDataSignature(
+            item.instance.getRenderedHunkData()
+          ),
           element: item.element,
           instance: item.instance,
         });
@@ -3383,6 +3390,8 @@ function hasItemLayoutOptionChanged<LAnnotation>(
       (nextOptions.diffIndicators ?? 'bars') ||
     (previousOptions.hunkSeparators ?? 'line-info') !==
       (nextOptions.hunkSeparators ?? 'line-info') ||
+    (previousOptions.hunkSeparatorSlots ?? false) !==
+      (nextOptions.hunkSeparatorSlots ?? false) ||
     (previousOptions.expandUnchanged ?? false) !==
       (nextOptions.expandUnchanged ?? false) ||
     (previousOptions.collapsedContextThreshold ??
@@ -3401,6 +3410,8 @@ function hasCodeViewDiffEstimateOptionChanged<LAnnotation>(
       (nextOptions.disableFileHeader ?? false) ||
     (previousOptions.hunkSeparators ?? 'line-info') !==
       (nextOptions.hunkSeparators ?? 'line-info') ||
+    (previousOptions.hunkSeparatorSlots ?? false) !==
+      (nextOptions.hunkSeparatorSlots ?? false) ||
     (previousOptions.expandUnchanged ?? false) !==
       (nextOptions.expandUnchanged ?? false) ||
     (previousOptions.collapsedContextThreshold ??
@@ -3496,6 +3507,7 @@ function getSlotSnapshot<LAnnotation>(
     hasHeaderRenderers,
     hasAnnotationRenderer,
     hasGutterRenderer,
+    hasHunkSeparatorRenderer,
   }: CodeViewCoordinator<LAnnotation>
 ): CodeViewRenderedItem<LAnnotation>[] | undefined {
   if (renderedItems.length === 0) {
@@ -3506,14 +3518,19 @@ function getSlotSnapshot<LAnnotation>(
     return renderedItems;
   }
 
-  if (!hasAnnotationRenderer) {
+  if (!hasAnnotationRenderer && !hasHunkSeparatorRenderer) {
     return undefined;
   }
 
   const slotSnapshot: CodeViewRenderedItem<LAnnotation>[] = [];
 
   for (const renderedItem of renderedItems) {
-    if (hasAnnotations(renderedItem.item)) {
+    if (
+      (hasAnnotationRenderer && hasAnnotations(renderedItem.item)) ||
+      (hasHunkSeparatorRenderer &&
+        renderedItem.type === 'diff' &&
+        renderedItem.item.fileDiff.hunks.length > 0)
+    ) {
       slotSnapshot.push(renderedItem);
     }
   }
@@ -3542,11 +3559,31 @@ function areSlotSnapshotsEqual<LAnnotation>(
       previousItem.id !== nextItem.id ||
       previousItem.type !== nextItem.type ||
       previousItem.element !== nextItem.element ||
-      previousItem.version !== nextItem.version
+      previousItem.version !== nextItem.version ||
+      (previousItem.type === 'diff' &&
+        nextItem.type === 'diff' &&
+        previousItem.hunkDataSignature !== nextItem.hunkDataSignature)
     ) {
       return false;
     }
   }
 
   return true;
+}
+
+function getHunkDataSignature(hunkData: readonly HunkData[]): string {
+  return hunkData
+    .map((hunk) =>
+      [
+        hunk.slotName,
+        hunk.hunkSlot === true ? '1' : '0',
+        hunk.hunkIndex,
+        hunk.lines,
+        hunk.type,
+        hunk.expandable?.chunked === true ? '1' : '0',
+        hunk.expandable?.up === true ? '1' : '0',
+        hunk.expandable?.down === true ? '1' : '0',
+      ].join(':')
+    )
+    .join('|');
 }

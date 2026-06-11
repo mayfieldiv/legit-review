@@ -2,43 +2,8 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   computeFileViewed,
-  getHunkViewedAnchor,
+  computeHunkViewedState,
 } from '../app/_components/utils';
-
-describe('getHunkViewedAnchor', () => {
-  test('anchors to the last addition line when additions exist', () => {
-    expect(
-      getHunkViewedAnchor({
-        additionStart: 10,
-        additionCount: 5,
-        deletionStart: 9,
-        deletionCount: 2,
-      })
-    ).toEqual({ side: 'additions', lineNumber: 14 });
-  });
-
-  test('falls back to the deletions side for pure deletions', () => {
-    expect(
-      getHunkViewedAnchor({
-        additionStart: 0,
-        additionCount: 0,
-        deletionStart: 4,
-        deletionCount: 3,
-      })
-    ).toEqual({ side: 'deletions', lineNumber: 6 });
-  });
-
-  test('returns undefined when the hunk has no lines on either side', () => {
-    expect(
-      getHunkViewedAnchor({
-        additionStart: 0,
-        additionCount: 0,
-        deletionStart: 0,
-        deletionCount: 0,
-      })
-    ).toBeUndefined();
-  });
-});
 
 describe('computeFileViewed', () => {
   const FILE = 'src/app.ts';
@@ -73,5 +38,42 @@ describe('computeFileViewed', () => {
   test('hunk-less files rely on the file-level mark only', () => {
     expect(computeFileViewed({}, {}, FILE, 'fh', [])).toBe(false);
     expect(computeFileViewed({ [FILE]: 'fh' }, {}, FILE, 'fh', [])).toBe(true);
+  });
+});
+
+describe('computeHunkViewedState', () => {
+  const FILE = 'src/app.ts';
+
+  test('marks every hunk viewed when the file-level mark matches', () => {
+    expect(
+      computeHunkViewedState({ [FILE]: 'fh' }, {}, FILE, 'fh', 'h1')
+    ).toEqual({
+      hunkHash: 'h1',
+      viewed: true,
+    });
+  });
+
+  test('ignores stale file-level marks for edited hunks', () => {
+    expect(
+      computeHunkViewedState({ [FILE]: 'old' }, {}, FILE, 'fh', 'h1')
+    ).toEqual({
+      hunkHash: 'h1',
+      viewed: false,
+    });
+  });
+
+  test('uses per-hunk marks when no current file-level mark exists', () => {
+    expect(
+      computeHunkViewedState({}, { [FILE]: ['h1'] }, FILE, 'fh', 'h1')
+    ).toEqual({
+      hunkHash: 'h1',
+      viewed: true,
+    });
+  });
+
+  test('returns undefined when the hunk index has no hash', () => {
+    expect(
+      computeHunkViewedState({}, { [FILE]: ['h1'] }, FILE, 'fh', undefined)
+    ).toBeUndefined();
   });
 });

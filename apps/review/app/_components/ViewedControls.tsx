@@ -8,15 +8,14 @@ interface HunkViewedPillProps {
   onToggle(): void;
 }
 
-// Per-hunk "Viewed" toggle rendered as an annotation row at the hunk's last
-// line. Marks are stored under the hunk's content hash, so an edited hunk
-// comes back unviewed automatically.
+// Per-hunk "Viewed" toggle rendered in the separator above the hunk. Marks are
+// stored under the hunk's content hash, so an edited hunk comes back unviewed.
 export const HunkViewedPill = memo(function HunkViewedPill({
   viewed,
   onToggle,
 }: HunkViewedPillProps) {
   return (
-    <div className="m-1.5 flex font-sans">
+    <div className="flex px-1 font-sans">
       <button
         type="button"
         aria-pressed={viewed}

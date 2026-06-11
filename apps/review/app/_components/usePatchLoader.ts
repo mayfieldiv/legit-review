@@ -51,6 +51,7 @@ import type {
   CodeViewSavedCommentEntry,
   CodeViewSavedCommentItem,
   CommentMetadata,
+  HunkViewedState,
   ReviewSourceInfo,
   ReviewStateComment,
   ReviewStateResponse,
@@ -60,8 +61,8 @@ import type {
 import {
   classifyCommentLineType,
   computeFileViewed,
+  computeHunkViewedState,
   getFileContentsLine,
-  getHunkViewedAnchor,
   isDraftAnnotation,
 } from './utils';
 import {
@@ -96,6 +97,10 @@ interface UsePatchLoaderResult {
   diffStats: CodeViewDiffStats | null;
   errorMessage: string | null;
   getFileHunkHashes(filePath: string): FileHunkHashes | undefined;
+  getHunkViewedState(
+    itemId: string,
+    hunkIndex: number
+  ): HunkViewedState | undefined;
   initialItems: CodeViewItem<CommentMetadata>[];
   isFileViewed(itemId: string): boolean;
   loadState: ViewerLoadState;
@@ -400,28 +405,15 @@ export function usePatchLoader({
         const filePath = item.fileDiff.name;
         const fileHashes = fileHashesByPathRef.current.get(filePath);
 
-        // Per-hunk Viewed pills, anchored to each hunk's last line.
+        const fileViewedByHash =
+          fileHashes != null &&
+          state.viewedFiles[filePath] === fileHashes.fileHash;
         const viewedHunkSet = new Set(state.viewedHunks[filePath] ?? []);
-        const pillAnnotations: DiffLineAnnotation<CommentMetadata>[] = [];
-        if (fileHashes != null) {
-          for (const [hunkIndex, hunk] of item.fileDiff.hunks.entries()) {
-            const hunkHash = fileHashes.hunkHashes[hunkIndex];
-            const anchor = getHunkViewedAnchor(hunk);
-            if (hunkHash == null || anchor == null) {
-              continue;
-            }
-            pillAnnotations.push({
-              side: anchor.side,
-              lineNumber: anchor.lineNumber,
-              metadata: {
-                kind: 'hunk-viewed',
-                key: `hunk-viewed:${item.id}:${hunkIndex}`,
-                hunkHash,
-                viewed: viewedHunkSet.has(hunkHash),
-              },
-            });
-          }
-        }
+        const hunkViewedSignature =
+          fileHashes?.hunkHashes.map((hunkHash) => [
+            hunkHash,
+            fileViewedByHash || viewedHunkSet.has(hunkHash),
+          ]) ?? [];
 
         const serverAnnotations = annotationsByItemId.get(item.id) ?? [];
 
@@ -449,7 +441,7 @@ export function usePatchLoader({
         // changed; updateItem invalidates the item's layout/render caches and
         // doing that for every file made state refreshes scale with diff size.
         const annotationSignature = JSON.stringify([
-          pillAnnotations,
+          hunkViewedSignature,
           serverAnnotations,
         ]);
         if (
@@ -465,11 +457,7 @@ export function usePatchLoader({
         );
 
         const drafts = (item.annotations ?? []).filter(isDraftAnnotation);
-        item.annotations = [
-          ...drafts,
-          ...pillAnnotations,
-          ...serverAnnotations,
-        ];
+        item.annotations = [...drafts, ...serverAnnotations];
         item.version = getNextItemVersion(item);
         viewer?.updateItem(item);
       }
@@ -650,6 +638,28 @@ export function usePatchLoader({
   const getFileHunkHashes = useStableCallback(
     (filePath: string): FileHunkHashes | undefined =>
       fileHashesByPathRef.current.get(filePath)
+  );
+
+  const getHunkViewedState = useStableCallback(
+    (itemId: string, hunkIndex: number): HunkViewedState | undefined => {
+      const state = reviewStateRef.current;
+      const item = loadedItemsByIdRef.current.get(itemId);
+      if (state == null || item == null || item.type !== 'diff') {
+        return undefined;
+      }
+      const filePath = item.fileDiff.name;
+      const fileHashes = fileHashesByPathRef.current.get(filePath);
+      if (fileHashes == null) {
+        return undefined;
+      }
+      return computeHunkViewedState(
+        state.viewedFiles,
+        state.viewedHunks,
+        filePath,
+        fileHashes.fileHash,
+        fileHashes.hunkHashes[hunkIndex]
+      );
+    }
   );
 
   const tryApplyLineHashTarget = useStableCallback(() => {
@@ -1135,6 +1145,7 @@ export function usePatchLoader({
     diffStats,
     errorMessage,
     getFileHunkHashes,
+    getHunkViewedState,
     initialItems,
     isFileViewed,
     loadState,

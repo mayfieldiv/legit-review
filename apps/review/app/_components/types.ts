@@ -56,20 +56,12 @@ export interface DraftCommentMetadata {
   range: SelectedLineRange;
 }
 
-// Synthetic annotation pinned to each hunk's last line: the "Viewed" toggle
-// for that hunk. `hunkHash` is the hunk-body content hash the mark is stored
-// under, so an edited hunk automatically loses its mark.
-export interface HunkViewedMetadata {
-  kind: 'hunk-viewed';
-  key: string;
+export interface HunkViewedState {
   hunkHash: string;
   viewed: boolean;
 }
 
-export type CommentMetadata =
-  | SavedCommentMetadata
-  | DraftCommentMetadata
-  | HunkViewedMetadata;
+export type CommentMetadata = SavedCommentMetadata | DraftCommentMetadata;
 
 // An annotation on either item kind: diff items carry a side, the plain
 // file items used for out-of-diff comments don't.

@@ -21,7 +21,10 @@ export function areManagedSnapshotsEqual<LAnnotation>(
       previousItem.id !== nextItem.id ||
       previousItem.type !== nextItem.type ||
       previousItem.element !== nextItem.element ||
-      previousItem.version !== nextItem.version
+      previousItem.version !== nextItem.version ||
+      (previousItem.type === 'diff' &&
+        nextItem.type === 'diff' &&
+        previousItem.hunkDataSignature !== nextItem.hunkDataSignature)
     ) {
       return false;
     }

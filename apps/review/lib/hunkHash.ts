@@ -3,7 +3,7 @@
 // elsewhere in the file that merely shift line numbers do not change the
 // hash, while any edit to the hunk's own content does. Used by both the
 // browser (mapping rendered hunks to viewed marks) and the server (agent API),
-// so it must stay isomorphic: Web Crypto only, no Node imports.
+// so it must stay isomorphic: no Node imports.
 
 export interface FileHunkHashes {
   filePath: string;
@@ -18,13 +18,113 @@ export interface FileHunkHashes {
 const DIFF_GIT_PATTERN = /^diff --git a\/(.*) b\/(.*)$/;
 
 export async function sha1Hex(text: string): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest(
-    'SHA-1',
-    new TextEncoder().encode(text)
+  const bytes = new TextEncoder().encode(text);
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle != null) {
+    const digest = await subtle.digest('SHA-1', bytes);
+    return bytesToHex(new Uint8Array(digest));
+  }
+
+  return sha1HexFromBytes(bytes);
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(
+    ''
   );
-  return Array.from(new Uint8Array(digest), (byte) =>
-    byte.toString(16).padStart(2, '0')
-  ).join('');
+}
+
+// Browsers expose crypto.subtle only on secure origins. This fallback keeps
+// local HTTP review sessions over LAN/Tailscale able to hash rendered hunks.
+function sha1HexFromBytes(input: Uint8Array): string {
+  const paddedLength = Math.ceil((input.length + 9) / 64) * 64;
+  const bytes = new Uint8Array(paddedLength);
+  bytes.set(input);
+  bytes[input.length] = 0x80;
+
+  const bitLength = input.length * 8;
+  const highLength = Math.floor(bitLength / 0x100000000);
+  const lowLength = bitLength >>> 0;
+  bytes[paddedLength - 8] = (highLength >>> 24) & 0xff;
+  bytes[paddedLength - 7] = (highLength >>> 16) & 0xff;
+  bytes[paddedLength - 6] = (highLength >>> 8) & 0xff;
+  bytes[paddedLength - 5] = highLength & 0xff;
+  bytes[paddedLength - 4] = (lowLength >>> 24) & 0xff;
+  bytes[paddedLength - 3] = (lowLength >>> 16) & 0xff;
+  bytes[paddedLength - 2] = (lowLength >>> 8) & 0xff;
+  bytes[paddedLength - 1] = lowLength & 0xff;
+
+  let h0 = 0x67452301;
+  let h1 = 0xefcdab89;
+  let h2 = 0x98badcfe;
+  let h3 = 0x10325476;
+  let h4 = 0xc3d2e1f0;
+  const words = new Uint32Array(80);
+
+  for (let offset = 0; offset < bytes.length; offset += 64) {
+    for (let index = 0; index < 16; index++) {
+      const wordOffset = offset + index * 4;
+      words[index] =
+        ((bytes[wordOffset] ?? 0) << 24) |
+        ((bytes[wordOffset + 1] ?? 0) << 16) |
+        ((bytes[wordOffset + 2] ?? 0) << 8) |
+        (bytes[wordOffset + 3] ?? 0);
+    }
+    for (let index = 16; index < 80; index++) {
+      words[index] = rotateLeft(
+        words[index - 3] ^
+          words[index - 8] ^
+          words[index - 14] ^
+          words[index - 16],
+        1
+      );
+    }
+
+    let a = h0;
+    let b = h1;
+    let c = h2;
+    let d = h3;
+    let e = h4;
+
+    for (let index = 0; index < 80; index++) {
+      let f: number;
+      let k: number;
+      if (index < 20) {
+        f = (b & c) | (~b & d);
+        k = 0x5a827999;
+      } else if (index < 40) {
+        f = b ^ c ^ d;
+        k = 0x6ed9eba1;
+      } else if (index < 60) {
+        f = (b & c) | (b & d) | (c & d);
+        k = 0x8f1bbcdc;
+      } else {
+        f = b ^ c ^ d;
+        k = 0xca62c1d6;
+      }
+
+      const temp = (rotateLeft(a, 5) + f + e + k + words[index]) >>> 0;
+      e = d;
+      d = c;
+      c = rotateLeft(b, 30);
+      b = a;
+      a = temp;
+    }
+
+    h0 = (h0 + a) >>> 0;
+    h1 = (h1 + b) >>> 0;
+    h2 = (h2 + c) >>> 0;
+    h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0;
+  }
+
+  return [h0, h1, h2, h3, h4]
+    .map((word) => word.toString(16).padStart(8, '0'))
+    .join('');
+}
+
+function rotateLeft(value: number, bits: number): number {
+  return ((value << bits) | (value >>> (32 - bits))) >>> 0;
 }
 
 // Hashes every file block in a unified diff patch.

@@ -26,6 +26,9 @@ const nextConfig = {
   reactStrictMode: false,
   reactCompiler: true,
   devIndicators: false,
+  // Next blocks dev client resources on non-localhost origins unless they are
+  // allowlisted. `susarch` is the Tailscale host used for this local review app.
+  allowedDevOrigins: ['susarch'],
   experimental: {
     cssChunking: 'strict',
   },

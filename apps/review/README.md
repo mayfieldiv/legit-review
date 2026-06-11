@@ -11,7 +11,7 @@ local git and a durable review store.
 ## Run
 
 ```bash
-bun ws review dev   # http://127.0.0.1:3693 (port shifts with PIERRE_PORT_OFFSET)
+bun ws review dev   # http://127.0.0.1:3693 or http://susarch:3693 over Tailscale
 ```
 
 Open `/review?repo=/absolute/path/to/repo` (or use the picker at `/`). Optional

@@ -4,6 +4,7 @@ import {
   findHunkAnchorInPatch,
   hashFileBlock,
   hashPatchFiles,
+  sha1Hex,
   splitPatchIntoFileBlocks,
 } from '../lib/hunkHash';
 
@@ -44,6 +45,32 @@ Binary files /dev/null and b/img.png differ
 const MULTI_FILE_PATCH = `${FILE_BLOCK}${BINARY_BLOCK}diff --git a/empty.txt b/empty.txt
 new file mode 100644
 `;
+
+describe('sha1Hex', () => {
+  test('matches the standard SHA-1 digest', async () => {
+    expect(await sha1Hex('abc')).toBe(
+      'a9993e364706816aba3e25717850c26c9cd0d89d'
+    );
+  });
+
+  test('falls back when Web Crypto subtle is unavailable', async () => {
+    const originalCrypto = globalThis.crypto;
+    try {
+      Object.defineProperty(globalThis, 'crypto', {
+        configurable: true,
+        value: { subtle: undefined } as unknown as Crypto,
+      });
+      expect(await sha1Hex('abc')).toBe(
+        'a9993e364706816aba3e25717850c26c9cd0d89d'
+      );
+    } finally {
+      Object.defineProperty(globalThis, 'crypto', {
+        configurable: true,
+        value: originalCrypto,
+      });
+    }
+  });
+});
 
 describe('splitPatchIntoFileBlocks', () => {
   test('splits on diff --git boundaries', () => {

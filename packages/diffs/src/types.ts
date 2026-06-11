@@ -407,6 +407,13 @@ export interface BaseDiffOptions extends BaseCodeOptions {
   expansionLineCount?: number; // 100 is default
 
   /**
+   * Render the expand controls on hunk separators as labeled buttons —
+   * "<n> lines" for each direction plus an "All <n> lines" button — instead
+   * of the icon-only buttons next to the unmodified-lines text.
+   */
+  expansionLineLabels?: boolean; // false is default
+
+  /**
    * Options forwarded to the underlying diff algorithm when computing diffs
    * from file contents (oldFile/newFile). Has no effect on pre-parsed patches.
    */

@@ -1080,6 +1080,33 @@
     transform: scaleY(-1);
   }
 
+  /* Labeled expand controls (expansionLineLabels): a left-aligned row of
+   * "<n> lines" / "All <n> lines" buttons instead of icon-only buttons next
+   * to the unmodified-lines text. */
+  [data-separator-wrapper][data-separator-labeled] {
+    display: flex;
+    gap: 2px;
+    background-color: var(--diffs-bg-separator);
+
+    [data-expand-button] {
+      gap: 6px;
+      min-width: 0;
+      padding-inline: 8px;
+      border-right: none;
+      background-color: transparent;
+      white-space: nowrap;
+
+      &:hover {
+        background-color: var(--diffs-bg);
+        color: var(--diffs-fg);
+      }
+
+      &[data-expand-all-button] {
+        display: flex;
+      }
+    }
+  }
+
   [data-separator-content] {
     flex: 1 1 auto;
     padding: 0 1ch;

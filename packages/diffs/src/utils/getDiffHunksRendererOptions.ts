@@ -31,6 +31,7 @@ export function getDiffHunksRendererOptions<LAnnotation>(
     lineDiffType: options?.lineDiffType,
     maxLineDiffLength: options?.maxLineDiffLength,
     expansionLineCount: options?.expansionLineCount,
+    expansionLineLabels: options?.expansionLineLabels,
     headerRenderMode:
       options?.renderCustomHeader != null ? 'custom' : 'default',
   };

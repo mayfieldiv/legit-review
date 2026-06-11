@@ -249,6 +249,7 @@ const CODE_VIEW_DIFF_OPTION_KEYS = [
   'lineDiffType',
   'maxLineDiffLength',
   'expansionLineCount',
+  'expansionLineLabels',
   'lineHoverHighlight',
   'enableTokenInteractionsOnWhitespace',
   'enableGutterUtility',

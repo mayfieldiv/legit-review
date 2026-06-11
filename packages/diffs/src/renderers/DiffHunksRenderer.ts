@@ -100,6 +100,7 @@ interface PushSeparatorProps {
 interface ProcessContext {
   rowCount: number;
   expansionLineCount: number;
+  expansionLineLabels: boolean;
   hunkSeparators: HunkSeparators;
   unifiedContentAST: ElementContent[];
   deletionsContentAST: ElementContent[];
@@ -353,6 +354,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       expandUnchanged = false,
       collapsedContextThreshold = DEFAULT_COLLAPSED_CONTEXT_THRESHOLD,
       expansionLineCount = 100,
+      expansionLineLabels = false,
       hunkSeparators = 'line-info',
       lineDiffType = 'word-alt',
       maxLineDiffLength = 1000,
@@ -376,6 +378,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       expandUnchanged,
       collapsedContextThreshold,
       expansionLineCount,
+      expansionLineLabels,
       hunkSeparators,
       lineDiffType,
       maxLineDiffLength,
@@ -731,6 +734,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       disableFileHeader,
       expandUnchanged,
       expansionLineCount,
+      expansionLineLabels,
       collapsedContextThreshold,
       hunkSeparators,
     } = this.getOptionsWithDefaults();
@@ -754,6 +758,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       deletionsGutterAST: createGutterWrapper(),
       additionsGutterAST: createGutterWrapper(),
       expansionLineCount,
+      expansionLineLabels,
       hunkData,
       incrementRowCount(count = 1) {
         context.rowCount += count;
@@ -1621,6 +1626,9 @@ function pushSeparator(
       slotName,
       isFirstHunk,
       isLastHunk,
+      labeled: context.expansionLineLabels,
+      collapsedLines,
+      expansionLineCount: context.expansionLineCount,
     })
   );
   linesAST.push(
@@ -1632,6 +1640,9 @@ function pushSeparator(
       slotName,
       isFirstHunk,
       isLastHunk,
+      labeled: context.expansionLineLabels,
+      collapsedLines,
+      expansionLineCount: context.expansionLineCount,
     })
   );
   if (type !== 'additions') {

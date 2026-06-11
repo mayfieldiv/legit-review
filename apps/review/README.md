@@ -31,6 +31,12 @@ then `main`/`master`, then `HEAD` (working-tree-only review).
   untouched hunks stay collapsed.
 - **Outdated detection** — a comment whose anchor hunk's content changed is
   badged "Outdated" automatically.
+- **Expandable context** — GitHub-style expanders on hunk separators reveal the
+  unmodified lines above/below/between hunks (20 per click, or all at once).
+  After the diff streams in, the client fetches both full file sides
+  (`POST /api/contents`) and re-parses each file's patch with them attached;
+  files whose contents can't be paired (binary, oversized, mid-edit drift)
+  simply keep the plain diff.
 - **Live refresh** — a per-repo watcher fingerprints HEAD + working tree every
   second while the page is open; edits reload the diff in place (scroll
   preserved), and store mutations stream to the browser over SSE.
@@ -56,6 +62,7 @@ Loopback-only REST, keyed by `?repo=<absolute path>`:
 | `PUT /api/viewed`                              | Set/clear viewed marks (hunk- and/or file-level, one call)                      |
 | `GET /api/events`                              | SSE: `diff-changed`, `state-changed`                                            |
 | `GET /api/diff`                                | The unified diff the viewer renders                                             |
+| `POST /api/contents`                           | Full old/new contents for diffed files (context expansion)                      |
 
 A Claude Code skill for the resolve workflow lives at
 `~/.claude/skills/local-review/SKILL.md` (not part of this repo).

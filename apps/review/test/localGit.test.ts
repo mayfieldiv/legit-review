@@ -9,6 +9,7 @@ import {
   createLocalDiffStream,
   GitRequestError,
   listUntrackedFiles,
+  loadDiffFileContents,
   resolveLocalDiffSource,
   synthesizeUntrackedPatch,
 } from '../lib/git';
@@ -272,5 +273,92 @@ describe('untracked file synthesis', () => {
       await synthesizeUntrackedPatch(repo, 'has"quote.txt')
     ).toBeUndefined();
     expect(await synthesizeUntrackedPatch(repo, 'gone.txt')).toBeUndefined();
+  });
+});
+
+describe('loadDiffFileContents', () => {
+  test('returns merge-base and working-tree sides for modified and renamed files', async () => {
+    const repo = path.join(baseDir, 'contents');
+    await initRepo(repo);
+    await writeFile(path.join(repo, 'a.txt'), 'one\ntwo\nthree\n');
+    await writeFile(path.join(repo, 'old-name.txt'), 'alpha\nbeta\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'init');
+    git(repo, 'checkout', '-b', 'feature');
+
+    await writeFile(path.join(repo, 'a.txt'), 'one\nTWO\nthree\n');
+    git(repo, 'mv', 'old-name.txt', 'new-name.txt');
+    await writeFile(path.join(repo, 'new-name.txt'), 'alpha\nBETA\n');
+
+    const source = await resolveLocalDiffSource(repo, 'main');
+    const files = await loadDiffFileContents(source, [
+      { path: 'a.txt' },
+      { path: 'new-name.txt', prevPath: 'old-name.txt' },
+    ]);
+
+    expect(files).toEqual([
+      {
+        path: 'a.txt',
+        oldContents: 'one\ntwo\nthree\n',
+        newContents: 'one\nTWO\nthree\n',
+      },
+      {
+        path: 'new-name.txt',
+        oldContents: 'alpha\nbeta\n',
+        newContents: 'alpha\nBETA\n',
+      },
+    ]);
+  });
+
+  test('reports unavailable sides as null', async () => {
+    const repo = path.join(baseDir, 'contents-null');
+    await initRepo(repo);
+    await writeFile(
+      path.join(repo, 'bin.dat'),
+      Buffer.from([0x00, 0x01, 0x02])
+    );
+    await writeFile(path.join(repo, 'kept.txt'), 'kept\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'init');
+    git(repo, 'checkout', '-b', 'feature');
+    git(repo, 'rm', '-q', 'kept.txt');
+
+    const outside = path.join(baseDir, 'contents-outside.txt');
+    await writeFile(outside, 'outside the repo\n');
+
+    const source = await resolveLocalDiffSource(repo, 'main');
+    const files = await loadDiffFileContents(source, [
+      // Binary on both sides.
+      { path: 'bin.dat' },
+      // Deleted from the working tree: old side still resolves.
+      { path: 'kept.txt' },
+      // Never existed.
+      { path: 'missing.txt' },
+      // Path traversal must not read outside the repo.
+      { path: '../contents-outside.txt' },
+    ]);
+
+    expect(files).toEqual([
+      { path: 'bin.dat', oldContents: null, newContents: null },
+      { path: 'kept.txt', oldContents: 'kept\n', newContents: null },
+      { path: 'missing.txt', oldContents: null, newContents: null },
+      {
+        path: '../contents-outside.txt',
+        oldContents: null,
+        newContents: null,
+      },
+    ]);
+  });
+
+  test('returns null old sides in a repo with no commits', async () => {
+    const repo = path.join(baseDir, 'contents-unborn');
+    await initRepo(repo);
+    await writeFile(path.join(repo, 'fresh.txt'), 'brand new\n');
+
+    const source = await resolveLocalDiffSource(repo, null);
+    const files = await loadDiffFileContents(source, [{ path: 'fresh.txt' }]);
+    expect(files).toEqual([
+      { path: 'fresh.txt', oldContents: null, newContents: 'brand new\n' },
+    ]);
   });
 });

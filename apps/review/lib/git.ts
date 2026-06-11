@@ -9,6 +9,9 @@ import path from 'node:path';
 const MAX_UNTRACKED_BYTES = 10 * 1024 * 1024;
 // Matches git's own heuristic: a NUL byte in the first 8000 bytes means binary.
 const BINARY_SNIFF_BYTES = 8000;
+// Full file contents (for hunk expansion) above this size are reported as
+// unavailable instead of shipped to the browser.
+const MAX_CONTEXT_FILE_BYTES = 10 * 1024 * 1024;
 
 // Request-mappable failure: `status` becomes the HTTP status of the response.
 export class GitRequestError extends Error {
@@ -51,6 +54,37 @@ function runGit(repoPath: string | null, args: string[]): Promise<GitResult> {
         stderr: Buffer.concat(stderr).toString('utf8'),
       });
     });
+  });
+}
+
+// Like runGit, but pipes `input` to the child's stdin (for `git cat-file
+// --batch*`, which reads object specs from stdin).
+function runGitWithInput(
+  repoPath: string,
+  args: string[],
+  input: string
+): Promise<GitResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['-C', repoPath, ...args], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      resolve({
+        code: code ?? -1,
+        stdout: Buffer.concat(stdout),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+      });
+    });
+    child.stdin.on('error', () => {
+      // The child can exit before consuming all input (e.g. bad spec);
+      // surfacing EPIPE here would mask the real failure in `close`.
+    });
+    child.stdin.end(input);
   });
 }
 
@@ -452,4 +486,187 @@ export async function synthesizeUntrackedPatch(
   } finally {
     await handle.close();
   }
+}
+
+export interface DiffFileContentsRequest {
+  path: string;
+  // Pre-rename path; the old-side blob lives under this name at the merge
+  // base when the diff renamed the file.
+  prevPath?: string;
+}
+
+export interface DiffFileContents {
+  path: string;
+  oldContents: string | null;
+  newContents: string | null;
+}
+
+// Loads both sides of each diffed file in full, so the client can offer
+// GitHub-style expansion of unmodified context around hunks. The old side is
+// the blob at the merge base (what the review diff was computed against), the
+// new side is the working tree. Either side is null when unavailable as text:
+// missing path, non-blob (submodule), binary, or oversized.
+export async function loadDiffFileContents(
+  source: LocalDiffSource,
+  files: DiffFileContentsRequest[]
+): Promise<DiffFileContents[]> {
+  const { mergeBase } = source;
+  const oldTexts =
+    mergeBase == null
+      ? files.map(() => null)
+      : await loadBlobTexts(
+          source.repoPath,
+          files.map((file) => {
+            const sourcePath = file.prevPath ?? file.path;
+            return isSafeRepoRelativePath(sourcePath)
+              ? `${mergeBase}:${sourcePath}`
+              : null;
+          })
+        );
+  return Promise.all(
+    files.map(async (file, index) => ({
+      path: file.path,
+      oldContents: oldTexts[index] ?? null,
+      newContents: await readWorkingTreeText(source.repoPath, file.path),
+    }))
+  );
+}
+
+// Rejects paths git refuses to resolve inside `<rev>:<path>` specs: absolute
+// paths and `..` traversal make `git cat-file` exit fatally, which would
+// poison the entire batch instead of reporting one spec as missing.
+function isSafeRepoRelativePath(filePath: string): boolean {
+  return (
+    !path.isAbsolute(filePath) &&
+    filePath.split('/').every((segment) => segment !== '..')
+  );
+}
+
+// Resolves blob texts for `<rev>:<path>` specs with one git spawn pair for the
+// whole batch: `cat-file --batch-check` maps specs to oids and sizes without
+// reading content, then `cat-file --batch` fetches only the text-sized blobs
+// (by oid, so a repo mutation between the two spawns cannot skew the result).
+// Null specs are passed through; per-spec null in the result means missing
+// path, non-blob, oversized, or binary.
+async function loadBlobTexts(
+  repoPath: string,
+  specs: (string | null)[]
+): Promise<(string | null)[]> {
+  const results: (string | null)[] = specs.map(() => null);
+  // cat-file reads one spec per stdin line, so embedded newlines would smuggle
+  // in extra specs and shift every following record.
+  const inputIndexes: number[] = [];
+  for (const [index, spec] of specs.entries()) {
+    if (spec != null && !spec.includes('\n')) {
+      inputIndexes.push(index);
+    }
+  }
+  if (inputIndexes.length === 0) {
+    return results;
+  }
+
+  const check = await runGitWithInput(
+    repoPath,
+    ['cat-file', '--batch-check'],
+    `${inputIndexes.map((index) => specs[index]).join('\n')}\n`
+  );
+  if (check.code !== 0) {
+    throw new Error(
+      `git cat-file --batch-check exited with ${check.code}: ${check.stderr.trim()}`
+    );
+  }
+
+  // One output line per input spec, in input order. Unresolvable specs print
+  // `<spec> missing` instead of `<oid> <type> <size>`.
+  const checkLines = check.stdout.toString('utf8').split('\n');
+  const fetchIndexes: number[] = [];
+  const fetchOids: string[] = [];
+  for (const [lineIndex, specIndex] of inputIndexes.entries()) {
+    const match = /^([0-9a-f]+) blob (\d+)$/.exec(checkLines[lineIndex] ?? '');
+    if (match != null && Number(match[2]) <= MAX_CONTEXT_FILE_BYTES) {
+      fetchIndexes.push(specIndex);
+      fetchOids.push(match[1]);
+    }
+  }
+  if (fetchIndexes.length === 0) {
+    return results;
+  }
+
+  const batch = await runGitWithInput(
+    repoPath,
+    ['cat-file', '--batch'],
+    `${fetchOids.join('\n')}\n`
+  );
+  if (batch.code !== 0) {
+    throw new Error(
+      `git cat-file --batch exited with ${batch.code}: ${batch.stderr.trim()}`
+    );
+  }
+
+  const blobs = parseCatFileBatchBlobs(batch.stdout, fetchOids.length);
+  for (const [blobIndex, specIndex] of fetchIndexes.entries()) {
+    const blob = blobs[blobIndex];
+    if (blob != null && !isBinaryBuffer(blob)) {
+      results[specIndex] = blob.toString('utf8');
+    }
+  }
+  return results;
+}
+
+// Splits `git cat-file --batch` output into per-record content buffers. Each
+// record is `<oid> <type> <size>\n` followed by exactly <size> content bytes
+// and a trailing newline; records appear in input order.
+function parseCatFileBatchBlobs(
+  output: Buffer,
+  count: number
+): (Buffer | null)[] {
+  const blobs: (Buffer | null)[] = [];
+  let offset = 0;
+  for (let index = 0; index < count; index++) {
+    const headerEnd = output.indexOf(0x0a, offset);
+    if (headerEnd === -1) {
+      blobs.push(null);
+      continue;
+    }
+    const header = output.toString('utf8', offset, headerEnd);
+    const match = /^[0-9a-f]+ \S+ (\d+)$/.exec(header);
+    if (match == null) {
+      blobs.push(null);
+      offset = headerEnd + 1;
+      continue;
+    }
+    const size = Number(match[1]);
+    const contentStart = headerEnd + 1;
+    blobs.push(output.subarray(contentStart, contentStart + size));
+    offset = contentStart + size + 1;
+  }
+  return blobs;
+}
+
+// Reads a diffed file's current working-tree text. Null means expansion is
+// unavailable for this side: path outside the repo, not a regular file,
+// oversized, or binary.
+async function readWorkingTreeText(
+  repoPath: string,
+  filePath: string
+): Promise<string | null> {
+  const absolutePath = path.resolve(repoPath, filePath);
+  if (!absolutePath.startsWith(repoPath + path.sep)) {
+    return null;
+  }
+  let fileStat;
+  try {
+    fileStat = await stat(absolutePath);
+  } catch {
+    return null;
+  }
+  if (!fileStat.isFile() || fileStat.size > MAX_CONTEXT_FILE_BYTES) {
+    return null;
+  }
+  const content = await readFile(absolutePath);
+  return isBinaryBuffer(content) ? null : content.toString('utf8');
+}
+
+function isBinaryBuffer(content: Buffer): boolean {
+  return content.subarray(0, BINARY_SNIFF_BYTES).includes(0);
 }

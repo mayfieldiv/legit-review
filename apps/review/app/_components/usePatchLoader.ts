@@ -27,6 +27,11 @@ import {
   takePendingCodeViewItems,
 } from './codeViewDataAccumulator';
 import { CODE_VIEW_BATCH_COUNT, getInitialBatchSize } from './constants';
+import {
+  buildFullContextFileDiff,
+  type FullContextResponse,
+  isFullContextCandidate,
+} from './fullContext';
 import { getPatchTreePathPrefix } from './gitPatchMetadata';
 import {
   type CodeViewLineHashTarget,
@@ -145,6 +150,10 @@ export function usePatchLoader({
   // file path. Computed from the raw patch text with the same code the server
   // uses, so viewed marks and comment hunk anchors agree across both sides.
   const fileHashesByPathRef = useRef<Map<string, FileHunkHashes>>(new Map());
+  // Raw per-file patch text from the current stream, keyed by file path. The
+  // full-context upgrade re-parses this text with both full file contents
+  // attached so unmodified lines around hunks become expandable.
+  const patchTextByPathRef = useRef<Map<string, string>>(new Map());
   // Mirror of the latest server review state for synchronous reads from
   // render-time callbacks (e.g. the header Viewed checkbox).
   const reviewStateRef = useRef<ReviewStateResponse | null>(null);
@@ -532,6 +541,7 @@ export function usePatchLoader({
     appliedLineHashKeyRef.current = null;
     loadedItemsByIdRef.current = new Map();
     fileHashesByPathRef.current = new Map();
+    patchTextByPathRef.current = new Map();
     reviewStateRef.current = null;
     lastAppliedViewedByItemIdRef.current = new Map();
     lastAppliedAnnotationsByItemIdRef.current = new Map();
@@ -586,6 +596,103 @@ export function usePatchLoader({
           await yieldToBrowser();
           if (isCurrentRequest()) {
             tryApplyLineHashTarget();
+          }
+        }
+
+        // Upgrades partial (patch-only) file diffs to full-context diffs so
+        // the viewer can expand the unmodified lines around hunks, like
+        // GitHub's expanders. Runs after the diff is interactive: this is
+        // pure enhancement, so any failure (binary/oversized files, contents
+        // drifting from the patch mid-edit) leaves the partial diff in place.
+        async function hydrateFullContext() {
+          const candidates: {
+            item: CodeViewItem<CommentMetadata> & { type: 'diff' };
+            path: string;
+            prevPath: string | undefined;
+          }[] = [];
+          for (const item of loadedItemsByIdRef.current.values()) {
+            if (
+              item.type !== 'diff' ||
+              !isFullContextCandidate(item.fileDiff) ||
+              !patchTextByPathRef.current.has(item.fileDiff.name)
+            ) {
+              continue;
+            }
+            candidates.push({
+              item,
+              path: item.fileDiff.name,
+              prevPath: item.fileDiff.prevName,
+            });
+          }
+          if (candidates.length === 0) {
+            return;
+          }
+
+          let payload: FullContextResponse;
+          try {
+            const response = await fetch(`/api/contents?${patchSearchParams}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                files: candidates.map(({ path, prevPath }) => ({
+                  path,
+                  prevPath,
+                })),
+              }),
+              signal: controller.signal,
+            });
+            if (!response.ok) {
+              throw new Error((await response.text()).trim());
+            }
+            payload = (await response.json()) as FullContextResponse;
+          } catch (error) {
+            if (isCurrentRequest()) {
+              console.warn('Failed to load full file contents', error);
+            }
+            return;
+          }
+          if (!isCurrentRequest()) {
+            return;
+          }
+
+          const contentsByPath = new Map(
+            payload.files.map((file) => [file.path, file])
+          );
+          let upgradedSinceYield = 0;
+          for (const { item, path: filePath } of candidates) {
+            const entry = contentsByPath.get(filePath);
+            const fileText = patchTextByPathRef.current.get(filePath);
+            const fileHashes = fileHashesByPathRef.current.get(filePath);
+            if (
+              entry?.oldContents == null ||
+              entry.newContents == null ||
+              fileText == null ||
+              fileHashes == null
+            ) {
+              continue;
+            }
+            const upgraded = buildFullContextFileDiff({
+              partial: item.fileDiff,
+              fileText,
+              cacheKey: `${cacheKeyPrefix}-${fileHashes.fileHash}-full`,
+              oldContents: entry.oldContents,
+              newContents: entry.newContents,
+            });
+            if (upgraded == null) {
+              continue;
+            }
+            item.fileDiff = upgraded;
+            item.version = getNextItemVersion(item);
+            viewerRef.current?.updateItem(item);
+            // Each updateItem re-renders synchronously; yield periodically so
+            // a large diff's upgrade pass can't lock up the main thread.
+            if (++upgradedSinceYield >= 8) {
+              upgradedSinceYield = 0;
+              await yieldToBrowser();
+              if (!isCurrentRequest()) {
+                return;
+              }
+            }
           }
         }
 
@@ -758,6 +865,7 @@ export function usePatchLoader({
           if (fileDiff.name !== fileHashes.filePath) {
             fileHashesByPathRef.current.set(fileDiff.name, fileHashes);
           }
+          patchTextByPathRef.current.set(fileDiff.name, fileText);
 
           const itemIdRename = appendFileDiffToCodeViewData(
             accumulator,
@@ -812,6 +920,7 @@ export function usePatchLoader({
         setDiffStats({ ...accumulator.diffStats });
         setLoadState('ready');
         await hydrateReviewState();
+        await hydrateFullContext();
       } catch (error) {
         if (!isCurrentRequest()) {
           return;

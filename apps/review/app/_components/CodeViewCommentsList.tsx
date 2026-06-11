@@ -1,7 +1,7 @@
 'use client';
 
 import type { AnnotationSide } from '@pierre/diffs';
-import { IconCheck, IconConvoFill, IconPlus } from '@pierre/icons';
+import { IconCheck, IconConvoFill, IconPlus, IconReply } from '@pierre/icons';
 import { memo, type MouseEvent, useMemo, useState } from 'react';
 
 import { CommentAuthorBadge } from './annotation-shared';
@@ -258,6 +258,13 @@ export const CodeViewCommentsList = memo(function CodeViewCommentsList({
                       >
                         {comment.message}
                       </p>
+                      {comment.replyCount > 0 && (
+                        <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+                          <IconReply size={11} />
+                          {comment.replyCount}{' '}
+                          {comment.replyCount === 1 ? 'reply' : 'replies'}
+                        </span>
+                      )}
                     </div>
                   </button>
                 ))}

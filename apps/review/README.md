@@ -26,9 +26,11 @@ then `main`/`master`, then `HEAD` (working-tree-only review).
   unchanged lines and entirely unchanged files host them too. Files outside the
   diff that have comments render as plain full-file views with the comment cards
   inline.
-- **Resolve workflow** — comments carry resolved/open state, a resolver name,
-  and an optional resolution note. An agent resolves them over HTTP and the
-  badge appears in the open browser within a second.
+- **Reply threads** — every comment is a GitHub-style conversation: replies,
+  in-place edit/delete on each message, and a Resolve/Unresolve conversation
+  footer crediting the resolver. The typical agent loop is reply with what
+  you did, then resolve the root comment; both land in the open browser
+  within a second.
 - **Viewed marks** — a Viewed pill per hunk and a Viewed checkbox per file.
   Fully-viewed files auto-collapse. Marks are stored under content hashes of the
   hunk text, so when code changes the affected hunk pops back open on its own;
@@ -56,17 +58,20 @@ Branches are isolated; switching branches switches review state.
 
 Loopback-only REST, keyed by `?repo=<absolute path>`:
 
-| Endpoint                                       | Purpose                                                                         |
-| ---------------------------------------------- | ------------------------------------------------------------------------------- |
-| `GET /api/state`                               | Full review state (comments + viewed marks)                                     |
-| `GET /api/comments?status=open\|resolved\|all` | List comments                                                                   |
-| `POST /api/comments`                           | Create a comment (omit `hunkHash` and the server anchors it; 422 on bad lines)  |
-| `PATCH /api/comments/:id`                      | Edit / resolve (`{"resolved":true,"resolvedBy":"claude","resolutionNote":"…"}`) |
-| `DELETE /api/comments/:id`                     | Delete                                                                          |
-| `PUT /api/viewed`                              | Set/clear viewed marks (hunk- and/or file-level, one call)                      |
-| `GET /api/events`                              | SSE: `diff-changed`, `state-changed`                                            |
-| `GET /api/diff`                                | The unified diff the viewer renders                                             |
-| `POST /api/contents`                           | Full old/new contents for diffed files (context expansion)                      |
+| Endpoint                                       | Purpose                                                                        |
+| ---------------------------------------------- | ------------------------------------------------------------------------------ |
+| `GET /api/state`                               | Full review state (comments + viewed marks)                                    |
+| `GET /api/comments?status=open\|resolved\|all` | List comments (each carries its `replies`)                                     |
+| `POST /api/comments`                           | Create a comment (omit `hunkHash` and the server anchors it; 422 on bad lines) |
+| `PATCH /api/comments/:id`                      | Edit / resolve (`{"resolved":true,"resolvedBy":"claude"}`)                     |
+| `DELETE /api/comments/:id`                     | Delete the thread                                                              |
+| `POST /api/comments/:id/replies`               | Reply (`{"message":"…","author":"claude"}`)                                    |
+| `PATCH /api/comments/:id/replies/:replyId`     | Edit a reply's message                                                         |
+| `DELETE /api/comments/:id/replies/:replyId`    | Delete a reply                                                                 |
+| `PUT /api/viewed`                              | Set/clear viewed marks (hunk- and/or file-level, one call)                     |
+| `GET /api/events`                              | SSE: `diff-changed`, `state-changed`                                           |
+| `GET /api/diff`                                | The unified diff the viewer renders                                            |
+| `POST /api/contents`                           | Full old/new contents for diffed files (context expansion)                     |
 
 When `POST /api/comments` is called without a `hunkHash` (the browser always
 sends one), the server anchors the comment itself: a line inside a diff hunk

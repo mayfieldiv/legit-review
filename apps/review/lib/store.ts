@@ -18,6 +18,16 @@ export interface StoredCommentRange {
   endSide?: CommentSide;
 }
 
+// A threaded reply under a comment. Replies share the parent's anchor and
+// resolution state — only the root comment resolves, GitHub-style.
+export interface StoredCommentReply {
+  id: string;
+  author: string;
+  message: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface StoredComment {
   id: string;
   filePath: string;
@@ -31,9 +41,9 @@ export interface StoredComment {
   hunkHash: string;
   message: string;
   author: string;
+  replies: StoredCommentReply[];
   resolved: boolean;
   resolvedBy?: string;
-  resolutionNote?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -64,7 +74,11 @@ export interface UpdateCommentInput {
   message?: string;
   resolved?: boolean;
   resolvedBy?: string;
-  resolutionNote?: string;
+}
+
+export interface CreateReplyInput {
+  message: string;
+  author?: string;
 }
 
 function dataDir(): string {
@@ -106,9 +120,36 @@ export async function readState(
     if (parsed.version !== 1) {
       return createEmptyState(repoPath, branch);
     }
+    for (const comment of parsed.comments) {
+      normalizeComment(comment);
+    }
     return parsed;
   } catch {
     return createEmptyState(repoPath, branch);
+  }
+}
+
+// Upgrades comments written before reply threads existed: gives them an empty
+// reply list and converts the old free-form `resolutionNote` field into a
+// reply from the resolver, so historical notes stay visible in threads.
+function normalizeComment(
+  comment: StoredComment & { resolutionNote?: string }
+): void {
+  comment.replies ??= [];
+  if (comment.resolutionNote != null) {
+    if (comment.resolutionNote !== '') {
+      comment.replies.push({
+        // Deterministic id: the migration runs on every read until the next
+        // write persists it, and the reply must keep its identity across
+        // those reads for edit/delete to target it.
+        id: `legacy-note-${comment.id}`,
+        author: comment.resolvedBy ?? 'agent',
+        message: comment.resolutionNote,
+        createdAt: comment.updatedAt,
+        updatedAt: comment.updatedAt,
+      });
+    }
+    delete comment.resolutionNote;
   }
 }
 
@@ -162,6 +203,7 @@ export async function createComment(
     hunkHash: input.hunkHash ?? '',
     message: input.message,
     author: input.author ?? 'user',
+    replies: [],
     resolved: false,
     createdAt: now,
     updatedAt: now,
@@ -191,17 +233,80 @@ export async function updateComment(
       comment.resolved = input.resolved;
       if (input.resolved) {
         comment.resolvedBy = input.resolvedBy ?? comment.resolvedBy ?? 'user';
-        if (input.resolutionNote != null) {
-          comment.resolutionNote = input.resolutionNote;
-        }
       } else {
         delete comment.resolvedBy;
-        delete comment.resolutionNote;
       }
-    } else if (input.resolutionNote != null) {
-      comment.resolutionNote = input.resolutionNote;
     }
     comment.updatedAt = new Date().toISOString();
+    updated = comment;
+  });
+  return updated;
+}
+
+export async function addCommentReply(
+  repoPath: string,
+  branch: string,
+  commentId: string,
+  input: CreateReplyInput
+): Promise<StoredComment | undefined> {
+  let updated: StoredComment | undefined;
+  await mutateState(repoPath, branch, (state) => {
+    const comment = state.comments.find((entry) => entry.id === commentId);
+    if (comment == null) {
+      return;
+    }
+    const now = new Date().toISOString();
+    comment.replies.push({
+      id: randomUUID(),
+      author: input.author ?? 'user',
+      message: input.message,
+      createdAt: now,
+      updatedAt: now,
+    });
+    comment.updatedAt = now;
+    updated = comment;
+  });
+  return updated;
+}
+
+export async function updateCommentReply(
+  repoPath: string,
+  branch: string,
+  commentId: string,
+  replyId: string,
+  message: string
+): Promise<StoredComment | undefined> {
+  let updated: StoredComment | undefined;
+  await mutateState(repoPath, branch, (state) => {
+    const comment = state.comments.find((entry) => entry.id === commentId);
+    const reply = comment?.replies.find((entry) => entry.id === replyId);
+    if (comment == null || reply == null) {
+      return;
+    }
+    reply.message = message;
+    reply.updatedAt = new Date().toISOString();
+    updated = comment;
+  });
+  return updated;
+}
+
+export async function deleteCommentReply(
+  repoPath: string,
+  branch: string,
+  commentId: string,
+  replyId: string
+): Promise<StoredComment | undefined> {
+  let updated: StoredComment | undefined;
+  await mutateState(repoPath, branch, (state) => {
+    const comment = state.comments.find((entry) => entry.id === commentId);
+    if (comment == null) {
+      return;
+    }
+    const next = comment.replies.filter((entry) => entry.id !== replyId);
+    if (next.length === comment.replies.length) {
+      return;
+    }
+    comment.replies = next;
     updated = comment;
   });
   return updated;

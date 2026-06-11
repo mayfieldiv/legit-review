@@ -195,6 +195,7 @@ export function upsertSavedCommentSidebarEntry(
     message: entry.message,
     outdated: entry.outdated,
     range: entry.range,
+    replyCount: entry.replyCount,
     resolved: entry.resolved,
     side: entry.side,
   };

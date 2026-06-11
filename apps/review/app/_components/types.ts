@@ -22,16 +22,25 @@ export interface ReviewSourceInfo {
   baseRef: string;
 }
 
+// A threaded reply as the UI consumes it (subset of the stored shape).
+export interface CommentReply {
+  id: string;
+  author: string;
+  message: string;
+  createdAt: string;
+}
+
 export interface SavedCommentMetadata {
   kind: 'saved';
   // The store id doubles as the annotation key.
   key: string;
   author: string;
   message: string;
+  createdAt: string;
   range: SelectedLineRange;
+  replies: CommentReply[];
   resolved: boolean;
   resolvedBy?: string;
-  resolutionNote?: string;
   // True when the hunk this comment was anchored to no longer exists in the
   // current diff (its content hash disappeared) — the code changed since the
   // comment was written.
@@ -106,9 +115,9 @@ export interface ReviewStateComment {
   hunkHash: string;
   message: string;
   author: string;
+  replies: CommentReply[];
   resolved: boolean;
   resolvedBy?: string;
-  resolutionNote?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -130,6 +139,7 @@ export interface CodeViewSavedCommentEvent {
   message: string;
   outdated: boolean;
   range: SelectedLineRange;
+  replyCount: number;
   resolved: boolean;
   side: AnnotationSide;
 }
@@ -148,6 +158,7 @@ export interface CodeViewSavedCommentEntry {
   message: string;
   outdated: boolean;
   range: SelectedLineRange;
+  replyCount: number;
   resolved: boolean;
   side: AnnotationSide;
 }

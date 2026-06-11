@@ -6,6 +6,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+  DELETE as deleteReplyRoute,
+  PATCH as patchReplyRoute,
+} from '../app/api/comments/[id]/replies/[replyId]/route';
+import { POST as postReplyRoute } from '../app/api/comments/[id]/replies/route';
+import {
   DELETE as deleteCommentRoute,
   PATCH as patchCommentRoute,
 } from '../app/api/comments/[id]/route';
@@ -114,7 +119,6 @@ describe('review state API', () => {
       jsonRequest(apiUrl(`/api/comments/${comment.id}`), 'PATCH', {
         resolved: true,
         resolvedBy: 'claude',
-        resolutionNote: 'Fixed in abc123',
       }),
       { params: Promise.resolve({ id: comment.id }) }
     );
@@ -145,6 +149,94 @@ describe('review state API', () => {
       { params: Promise.resolve({ id: comment.id }) }
     );
     expect(deleteResponse.status).toBe(204);
+  });
+
+  test('reply thread CRUD through route handlers', async () => {
+    const createResponse = await postCommentRoute(
+      jsonRequest(apiUrl('/api/comments'), 'POST', {
+        filePath: 'a.txt',
+        side: 'additions',
+        range: { start: 1, end: 1 },
+        message: 'How should this be fixed?',
+        lineSnippet: 'one',
+        hunkHash: 'hash-1',
+      })
+    );
+    const { comment } = (await createResponse.json()) as {
+      comment: { id: string; replies: unknown[] };
+    };
+    expect(comment.replies).toEqual([]);
+
+    // Reply (the agent path: explain the fix, then resolve the root).
+    const replyResponse = await postReplyRoute(
+      jsonRequest(apiUrl(`/api/comments/${comment.id}/replies`), 'POST', {
+        message: 'Extracted MAX_RETRIES; done in abc123.',
+        author: 'claude',
+      }),
+      { params: Promise.resolve({ id: comment.id }) }
+    );
+    expect(replyResponse.status).toBe(201);
+    const replied = (await replyResponse.json()) as {
+      comment: { replies: { id: string; author: string; message: string }[] };
+    };
+    expect(replied.comment.replies).toHaveLength(1);
+    expect(replied.comment.replies[0]?.author).toBe('claude');
+    const replyId = replied.comment.replies[0]?.id ?? '';
+
+    // Edit the reply.
+    const editResponse = await patchReplyRoute(
+      jsonRequest(
+        apiUrl(`/api/comments/${comment.id}/replies/${replyId}`),
+        'PATCH',
+        { message: 'Extracted MAX_RETRIES constant; done in abc123.' }
+      ),
+      { params: Promise.resolve({ id: comment.id, replyId }) }
+    );
+    expect(editResponse.status).toBe(200);
+    const edited = (await editResponse.json()) as {
+      comment: { replies: { message: string }[] };
+    };
+    expect(edited.comment.replies[0]?.message).toContain('constant');
+
+    // Unknown comment / reply ids → 404.
+    const missingComment = await postReplyRoute(
+      jsonRequest(apiUrl('/api/comments/nope/replies'), 'POST', {
+        message: 'x',
+      }),
+      { params: Promise.resolve({ id: 'nope' }) }
+    );
+    expect(missingComment.status).toBe(404);
+    const missingReply = await deleteReplyRoute(
+      new Request(apiUrl(`/api/comments/${comment.id}/replies/nope`), {
+        method: 'DELETE',
+      }),
+      { params: Promise.resolve({ id: comment.id, replyId: 'nope' }) }
+    );
+    expect(missingReply.status).toBe(404);
+
+    // Delete the reply.
+    const deleteResponse = await deleteReplyRoute(
+      new Request(apiUrl(`/api/comments/${comment.id}/replies/${replyId}`), {
+        method: 'DELETE',
+      }),
+      { params: Promise.resolve({ id: comment.id, replyId }) }
+    );
+    expect(deleteResponse.status).toBe(204);
+
+    const stateResponse = await getStateRoute(
+      new Request(apiUrl('/api/state'))
+    );
+    const state = (await stateResponse.json()) as {
+      comments: { id: string; replies: unknown[] }[];
+    };
+    expect(
+      state.comments.find((entry) => entry.id === comment.id)?.replies
+    ).toEqual([]);
+
+    await deleteCommentRoute(
+      new Request(apiUrl(`/api/comments/${comment.id}`), { method: 'DELETE' }),
+      { params: Promise.resolve({ id: comment.id }) }
+    );
   });
 
   test('rejects invalid comment bodies', async () => {

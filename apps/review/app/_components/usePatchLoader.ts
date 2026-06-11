@@ -320,10 +320,11 @@ export function usePatchLoader({
           key: comment.id,
           author: comment.author,
           message: comment.message,
+          createdAt: comment.createdAt,
           range: comment.range,
+          replies: comment.replies,
           resolved: comment.resolved,
           resolvedBy: comment.resolvedBy,
-          resolutionNote: comment.resolutionNote,
           outdated,
         };
         const itemId = item?.id ?? `missing:${comment.filePath}`;
@@ -356,6 +357,7 @@ export function usePatchLoader({
           message: comment.message,
           outdated,
           range: comment.range,
+          replyCount: comment.replies.length,
           resolved: comment.resolved,
           side: comment.side,
         };

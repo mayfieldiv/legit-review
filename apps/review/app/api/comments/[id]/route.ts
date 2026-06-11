@@ -15,22 +15,18 @@ const updateCommentSchema = z
     message: z.string().min(1).optional(),
     resolved: z.boolean().optional(),
     resolvedBy: z.string().min(1).optional(),
-    resolutionNote: z.string().optional(),
   })
-  .refine(
-    (value) =>
-      value.message != null ||
-      value.resolved != null ||
-      value.resolutionNote != null,
-    { message: 'Provide at least one field to update' }
-  );
+  .refine((value) => value.message != null || value.resolved != null, {
+    message: 'Provide at least one field to update',
+  });
 
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
 // Edits or resolves a comment. Agents resolve with
-// {"resolved": true, "resolvedBy": "<agent>", "resolutionNote": "..."}.
+// {"resolved": true, "resolvedBy": "<agent>"} — the explanation of what was
+// done belongs in a thread reply (POST /api/comments/:id/replies).
 export async function PATCH(request: Request, context: RouteContext) {
   try {
     const { repoPath, branch } = await requireRepoIdentity(request);

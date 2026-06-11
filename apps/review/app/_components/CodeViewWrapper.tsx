@@ -92,6 +92,13 @@ interface CodeViewWrapperProps {
   isFileViewed(itemId: string): boolean;
   onCommentDeleted(comment: CodeViewDeletedCommentEvent): void;
   onCommentSaved(comment: CodeViewSavedCommentEvent): void;
+  // Thread mutations (root edit, replies). All resolve false on failure so
+  // the card keeps its editor open; the metadata re-renders via the
+  // review-state refresh the container performs on success.
+  onDeleteReply(key: string, replyId: string): Promise<boolean>;
+  onEditComment(key: string, message: string): Promise<boolean>;
+  onEditReply(key: string, replyId: string, message: string): Promise<boolean>;
+  onReplyToComment(key: string, message: string): Promise<boolean>;
   onToggleFileViewed(itemId: string, viewed: boolean): void;
   onToggleHunkViewed(itemId: string, hunkHash: string, viewed: boolean): void;
   onToggleResolved(itemId: string, key: string, resolved: boolean): void;
@@ -118,6 +125,10 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
   isFileViewed,
   onCommentDeleted,
   onCommentSaved,
+  onDeleteReply,
+  onEditComment,
+  onEditReply,
+  onReplyToComment,
   onToggleFileViewed,
   onToggleHunkViewed,
   onToggleResolved,
@@ -365,6 +376,7 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
         message: trimmedMessage,
         outdated: savedMetadata.outdated,
         range: draftAnnotation.metadata.range,
+        replyCount: 0,
         resolved: savedMetadata.resolved,
         side,
       });
@@ -439,6 +451,10 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
           annotation={annotation}
           itemId={item.id}
           onDelete={handleRemoveComment}
+          onDeleteReply={onDeleteReply}
+          onEditComment={onEditComment}
+          onEditReply={onEditReply}
+          onReply={onReplyToComment}
           onToggleResolved={onToggleResolved}
           onToggleSelection={handleToggleCommentSelection}
         />

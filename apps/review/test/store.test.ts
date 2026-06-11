@@ -1,16 +1,19 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+  addCommentReply,
   createComment,
   deleteComment,
+  deleteCommentReply,
   readState,
   setViewedMarks,
   stateFilePath,
   updateComment,
+  updateCommentReply,
 } from '../lib/store';
 
 const REPO = '/fake/repo';
@@ -57,7 +60,6 @@ describe('store', () => {
     const resolved = await updateComment(REPO, BRANCH, created.id, {
       resolved: true,
       resolvedBy: 'claude',
-      resolutionNote: 'Extracted MAX_RETRIES',
     });
     expect(resolved?.resolved).toBe(true);
     expect(resolved?.resolvedBy).toBe('claude');
@@ -67,7 +69,6 @@ describe('store', () => {
     });
     expect(reopened?.resolved).toBe(false);
     expect(reopened?.resolvedBy).toBeUndefined();
-    expect(reopened?.resolutionNote).toBeUndefined();
 
     expect(
       await updateComment(REPO, BRANCH, 'missing-id', { resolved: true })
@@ -76,6 +77,94 @@ describe('store', () => {
     expect(await deleteComment(REPO, BRANCH, created.id)).toBe(true);
     expect(await deleteComment(REPO, BRANCH, created.id)).toBe(false);
     expect((await readState(REPO, BRANCH)).comments).toHaveLength(0);
+  });
+
+  test('reply lifecycle persists to disk', async () => {
+    const created = await createComment(REPO, BRANCH, {
+      filePath: 'src/app.ts',
+      side: 'additions',
+      range: { start: 5, end: 5 },
+      message: 'Why not a Map here?',
+    });
+    expect(created.replies).toEqual([]);
+
+    const withReply = await addCommentReply(REPO, BRANCH, created.id, {
+      message: 'A Map allocates per lookup table; this stays monomorphic.',
+      author: 'claude',
+    });
+    expect(withReply?.replies).toHaveLength(1);
+    expect(withReply?.replies[0]?.author).toBe('claude');
+    const replyId = withReply?.replies[0]?.id as string;
+
+    // Fresh read comes from disk.
+    let state = await readState(REPO, BRANCH);
+    expect(state.comments[0]?.replies[0]?.id).toBe(replyId);
+
+    const edited = await updateCommentReply(
+      REPO,
+      BRANCH,
+      created.id,
+      replyId,
+      'Updated explanation.'
+    );
+    expect(edited?.replies[0]?.message).toBe('Updated explanation.');
+
+    // Missing comment or reply ids resolve undefined.
+    expect(
+      await addCommentReply(REPO, BRANCH, 'missing', { message: 'x' })
+    ).toBeUndefined();
+    expect(
+      await updateCommentReply(REPO, BRANCH, created.id, 'missing', 'x')
+    ).toBeUndefined();
+    expect(
+      await deleteCommentReply(REPO, BRANCH, created.id, 'missing')
+    ).toBeUndefined();
+
+    const afterDelete = await deleteCommentReply(
+      REPO,
+      BRANCH,
+      created.id,
+      replyId
+    );
+    expect(afterDelete?.replies).toEqual([]);
+    state = await readState(REPO, BRANCH);
+    expect(state.comments[0]?.replies).toEqual([]);
+
+    await deleteComment(REPO, BRANCH, created.id);
+  });
+
+  test('migrates pre-thread comments: replies list + resolutionNote reply', async () => {
+    const repo = '/fake/legacy';
+    const legacy = await createComment(repo, 'main', {
+      filePath: 'f.ts',
+      side: 'additions',
+      range: { start: 1, end: 1 },
+      message: 'legacy comment',
+    });
+    // Rewrite the state file to the pre-thread shape: no replies array, a
+    // resolved comment carrying the old free-form resolutionNote.
+    const filePath = stateFilePath(repo, 'main');
+    const raw = JSON.parse(await readFile(filePath, 'utf8'));
+    delete raw.comments[0].replies;
+    raw.comments[0].resolved = true;
+    raw.comments[0].resolvedBy = 'claude';
+    raw.comments[0].resolutionNote = 'Fixed in abc123';
+    await writeFile(filePath, JSON.stringify(raw));
+
+    const state = await readState(repo, 'main');
+    const migrated = state.comments[0];
+    expect(migrated?.replies).toHaveLength(1);
+    expect(migrated?.replies[0]?.author).toBe('claude');
+    expect(migrated?.replies[0]?.message).toBe('Fixed in abc123');
+    expect(
+      (migrated as { resolutionNote?: string } | undefined)?.resolutionNote
+    ).toBeUndefined();
+    // The synthetic reply id is deterministic: the migration re-runs on
+    // every read until the next write, and edits/deletes must keep
+    // targeting the same reply.
+    expect(migrated?.replies[0]?.id).toBe(`legacy-note-${legacy.id}`);
+    const reread = await readState(repo, 'main');
+    expect(reread.comments[0]?.replies[0]?.id).toBe(migrated?.replies[0]?.id);
   });
 
   test('branches are isolated', async () => {

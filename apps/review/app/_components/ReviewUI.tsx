@@ -309,7 +309,9 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
           key: comment.id,
           author: comment.author,
           message: comment.message,
+          createdAt: comment.createdAt,
           range: input.range,
+          replies: [],
           resolved: false,
           outdated: false,
         };
@@ -323,6 +325,85 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
       }
     },
     [commentFileByItemId, getFileHunkHashes, repo]
+  );
+  // One helper for every thread mutation (edit the root message, add a
+  // reply, edit/delete a reply): sends the request, surfaces failures, and
+  // on success re-syncs review state so annotations and the sidebar
+  // re-render from the server's truth. Returns false on failure so comment
+  // cards can keep their in-progress editor open instead of losing text.
+  const mutateCommentThread = useCallback(
+    async (
+      path: string,
+      method: string,
+      body: unknown,
+      fallbackError: string
+    ): Promise<boolean> => {
+      try {
+        const params = new URLSearchParams({ repo });
+        const response = await fetch(`/api/comments/${path}?${params}`, {
+          method,
+          ...(body == null
+            ? {}
+            : {
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+              }),
+        });
+        if (!response.ok) {
+          throw new Error((await response.text()).trim());
+        }
+        await refreshReviewState();
+        return true;
+      } catch (error) {
+        toast.error(
+          error instanceof Error && error.message !== ''
+            ? error.message
+            : fallbackError
+        );
+        return false;
+      }
+    },
+    [refreshReviewState, repo]
+  );
+  const handleEditComment = useCallback(
+    (key: string, message: string) =>
+      mutateCommentThread(
+        key,
+        'PATCH',
+        { message },
+        'Failed to update comment.'
+      ),
+    [mutateCommentThread]
+  );
+  const handleReplyToComment = useCallback(
+    (key: string, message: string) =>
+      mutateCommentThread(
+        `${key}/replies`,
+        'POST',
+        { message, author: 'user' },
+        'Failed to add reply.'
+      ),
+    [mutateCommentThread]
+  );
+  const handleEditReply = useCallback(
+    (key: string, replyId: string, message: string) =>
+      mutateCommentThread(
+        `${key}/replies/${replyId}`,
+        'PATCH',
+        { message },
+        'Failed to update reply.'
+      ),
+    [mutateCommentThread]
+  );
+  const handleDeleteReply = useCallback(
+    (key: string, replyId: string) =>
+      mutateCommentThread(
+        `${key}/replies/${replyId}`,
+        'DELETE',
+        null,
+        'Failed to delete reply.'
+      ),
+    [mutateCommentThread]
   );
   const handleToggleResolved = useCallback(
     (itemId: string, key: string, resolved: boolean) => {
@@ -545,7 +626,11 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
             isFileViewed={isFileViewed}
             onCommentDeleted={handleCommentDeleted}
             onCommentSaved={handleCommentSaved}
+            onDeleteReply={handleDeleteReply}
+            onEditComment={handleEditComment}
+            onEditReply={handleEditReply}
             onLineLinkChange={onLineLinkChange}
+            onReplyToComment={handleReplyToComment}
             onToggleFileViewed={handleToggleFileViewed}
             onToggleHunkViewed={handleToggleHunkViewed}
             onToggleResolved={handleToggleResolved}

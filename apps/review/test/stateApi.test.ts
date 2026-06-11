@@ -119,15 +119,26 @@ describe('review state API', () => {
       jsonRequest(apiUrl(`/api/comments/${comment.id}`), 'PATCH', {
         resolved: true,
         resolvedBy: 'claude',
+        resolutionNote: 'Fixed in abc123.',
       }),
       { params: Promise.resolve({ id: comment.id }) }
     );
     expect(patchResponse.status).toBe(200);
     const patched = (await patchResponse.json()) as {
-      comment: { resolved: boolean; resolvedBy: string };
+      comment: {
+        resolved: boolean;
+        resolvedBy: string;
+        replies: { kind: string; author: string; message: string }[];
+      };
     };
     expect(patched.comment.resolved).toBe(true);
     expect(patched.comment.resolvedBy).toBe('claude');
+    expect(patched.comment.replies).toHaveLength(1);
+    expect(patched.comment.replies[0]).toMatchObject({
+      kind: 'resolution',
+      author: 'claude',
+      message: 'Fixed in abc123.',
+    });
 
     const openAfter = (await (
       await getCommentsRoute(
@@ -167,7 +178,7 @@ describe('review state API', () => {
     };
     expect(comment.replies).toEqual([]);
 
-    // Reply (the agent path: explain the fix, then resolve the root).
+    // Reply.
     const replyResponse = await postReplyRoute(
       jsonRequest(apiUrl(`/api/comments/${comment.id}/replies`), 'POST', {
         message: 'Extracted MAX_RETRIES; done in abc123.',
@@ -177,9 +188,17 @@ describe('review state API', () => {
     );
     expect(replyResponse.status).toBe(201);
     const replied = (await replyResponse.json()) as {
-      comment: { replies: { id: string; author: string; message: string }[] };
+      comment: {
+        replies: {
+          id: string;
+          kind: string;
+          author: string;
+          message: string;
+        }[];
+      };
     };
     expect(replied.comment.replies).toHaveLength(1);
+    expect(replied.comment.replies[0]).toMatchObject({ kind: 'reply' });
     expect(replied.comment.replies[0]?.author).toBe('claude');
     const replyId = replied.comment.replies[0]?.id ?? '';
 

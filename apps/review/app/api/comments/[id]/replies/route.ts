@@ -19,10 +19,10 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-// Adds a reply to a comment's thread. Agents answer questions or explain
-// their fix here ({"message": "...", "author": "<agent>"}), then resolve the
-// root comment via PATCH /api/comments/:id. Returns the full updated comment
-// so callers see the whole thread.
+// Adds a reply to a comment's thread. General discussion belongs here; a
+// resolution explanation can instead be sent as `resolutionNote` on
+// PATCH /api/comments/:id so resolving is one request. Returns the full
+// updated comment so callers see the whole thread.
 export async function POST(request: Request, context: RouteContext) {
   try {
     const { repoPath, branch } = await requireRepoIdentity(request);

@@ -22,9 +22,11 @@ export interface ReviewSourceInfo {
   baseRef: string;
 }
 
-// A threaded reply as the UI consumes it (subset of the stored shape).
+// One non-root thread entry as the UI consumes it: either a discussion reply or
+// a resolution event created when the thread is marked resolved.
 export interface CommentReply {
   id: string;
+  kind: 'reply' | 'resolution';
   author: string;
   message: string;
   createdAt: string;

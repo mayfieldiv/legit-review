@@ -18,10 +18,14 @@ export interface StoredCommentRange {
   endSide?: CommentSide;
 }
 
-// A threaded reply under a comment. Replies share the parent's anchor and
-// resolution state — only the root comment resolves, GitHub-style.
+// A threaded reply under a comment. User-authored replies and resolution
+// events share the parent's anchor; only the root comment carries the current
+// resolved/unresolved state, GitHub-style.
+export type StoredCommentReplyKind = 'reply' | 'resolution';
+
 export interface StoredCommentReply {
   id: string;
+  kind: StoredCommentReplyKind;
   author: string;
   message: string;
   createdAt: string;
@@ -74,6 +78,7 @@ export interface UpdateCommentInput {
   message?: string;
   resolved?: boolean;
   resolvedBy?: string;
+  resolutionNote?: string;
 }
 
 export interface CreateReplyInput {
@@ -133,9 +138,15 @@ export async function readState(
 // reply list and converts the old free-form `resolutionNote` field into a
 // reply from the resolver, so historical notes stay visible in threads.
 function normalizeComment(
-  comment: StoredComment & { resolutionNote?: string }
+  comment: StoredComment & {
+    replies?: (StoredCommentReply & { kind?: StoredCommentReplyKind })[];
+    resolutionNote?: string;
+  }
 ): void {
   comment.replies ??= [];
+  for (const reply of comment.replies) {
+    reply.kind ??= 'reply';
+  }
   if (comment.resolutionNote != null) {
     if (comment.resolutionNote !== '') {
       comment.replies.push({
@@ -143,6 +154,7 @@ function normalizeComment(
         // write persists it, and the reply must keep its identity across
         // those reads for edit/delete to target it.
         id: `legacy-note-${comment.id}`,
+        kind: 'resolution',
         author: comment.resolvedBy ?? 'agent',
         message: comment.resolutionNote,
         createdAt: comment.updatedAt,
@@ -230,9 +242,23 @@ export async function updateComment(
       comment.message = input.message;
     }
     if (input.resolved != null) {
+      const wasResolved = comment.resolved;
       comment.resolved = input.resolved;
       if (input.resolved) {
-        comment.resolvedBy = input.resolvedBy ?? comment.resolvedBy ?? 'user';
+        const resolvedBy = input.resolvedBy ?? comment.resolvedBy ?? 'user';
+        const resolutionNote = input.resolutionNote?.trim() ?? '';
+        comment.resolvedBy = resolvedBy;
+        if (!wasResolved || resolutionNote !== '') {
+          const now = new Date().toISOString();
+          comment.replies.push({
+            id: randomUUID(),
+            kind: 'resolution',
+            author: resolvedBy,
+            message: resolutionNote,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
       } else {
         delete comment.resolvedBy;
       }
@@ -258,6 +284,7 @@ export async function addCommentReply(
     const now = new Date().toISOString();
     comment.replies.push({
       id: randomUUID(),
+      kind: 'reply',
       author: input.author ?? 'user',
       message: input.message,
       createdAt: now,

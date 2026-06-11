@@ -1,5 +1,11 @@
 import type { CodeViewLineSelection } from '@pierre/diffs';
-import { IconArrowRight, IconPencil, IconTrash } from '@pierre/icons';
+import {
+  IconArrowRight,
+  IconCheck,
+  IconChevronSm,
+  IconPencil,
+  IconTrash,
+} from '@pierre/icons';
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -39,12 +45,9 @@ interface SavedAnnotationProps {
   onToggleSelection(selection: CodeViewLineSelection): void;
 }
 
-// Persisted review thread, GitHub-style: the root comment plus its replies,
-// a reply composer, and a Resolve/Unresolve conversation footer. Every
-// message is editable and deletable in place; deleting the root deletes the
-// whole thread. Resolved threads render dimmed with the resolver credited
-// in the footer; outdated threads (their hunk's content changed since the
-// root comment was written) carry an amber badge.
+// Persisted review thread, GitHub-style: the root comment plus replies,
+// inline resolution events, a reply composer, and a Resolve/Unresolve footer.
+// Resolved threads default collapsed; unresolved threads default expanded.
 export const SavedAnnotation = memo(function SavedAnnotation({
   annotation,
   itemId,
@@ -58,10 +61,22 @@ export const SavedAnnotation = memo(function SavedAnnotation({
 }: SavedAnnotationProps) {
   const { metadata } = annotation;
   const selection = { id: itemId, range: metadata.range };
+  const [collapsed, setCollapsed] = useState(metadata.resolved);
+  const previousResolved = useRef(metadata.resolved);
+
+  useEffect(() => {
+    if (previousResolved.current === metadata.resolved) {
+      return;
+    }
+    previousResolved.current = metadata.resolved;
+    setCollapsed(metadata.resolved);
+  }, [metadata.resolved]);
+
   return (
     <div
       role="button"
       tabIndex={0}
+      aria-expanded={!collapsed}
       className={cn(
         annotationCardBase,
         'group flex-col gap-0 p-0 cursor-pointer hover:border-[var(--diffshub-annotation-hover-border,var(--diffshub-annotation-border,var(--color-border)))]',
@@ -81,75 +96,229 @@ export const SavedAnnotation = memo(function SavedAnnotation({
         onToggleSelection(selection);
       }}
     >
-      <ThreadMessage
-        author={metadata.author}
-        createdAt={metadata.createdAt}
-        message={metadata.message}
-        kind="comment"
-        badges={
-          metadata.outdated ? (
-            <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-              Outdated
-            </span>
-          ) : null
-        }
-        onSaveEdit={(message) => onEditComment(metadata.key, message)}
-        onDelete={() => {
-          if (
-            metadata.replies.length > 0 &&
-            !window.confirm(
-              `Delete this thread? Its ${metadata.replies.length === 1 ? 'reply' : `${metadata.replies.length} replies`} will be deleted too.`
-            )
-          ) {
-            return;
-          }
-          onDelete(itemId, metadata.key);
-        }}
+      <ThreadHeader
+        collapsed={collapsed}
+        range={metadata.range}
+        replyCount={metadata.replies.length}
+        resolved={metadata.resolved}
+        outdated={metadata.outdated}
+        onToggle={() => setCollapsed((value) => !value)}
       />
-      {metadata.replies.map((reply) => (
-        <ThreadMessage
-          key={reply.id}
-          author={reply.author}
-          createdAt={reply.createdAt}
-          message={reply.message}
-          kind="reply"
-          onSaveEdit={(message) => onEditReply(metadata.key, reply.id, message)}
-          onDelete={() => void onDeleteReply(metadata.key, reply.id)}
-        />
-      ))}
-      <ReplyComposer onReply={(message) => onReply(metadata.key, message)} />
-      <div
-        className={cn(
-          'flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t px-3 py-2',
-          threadBorder
-        )}
-        onClick={(event) => event.stopPropagation()}
+      {!collapsed && (
+        <>
+          <ThreadMessage
+            author={metadata.author}
+            createdAt={metadata.createdAt}
+            message={metadata.message}
+            kind="comment"
+            badges={
+              metadata.outdated ? (
+                <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                  Outdated
+                </span>
+              ) : null
+            }
+            onSaveEdit={(message) => onEditComment(metadata.key, message)}
+            onDelete={() => {
+              if (
+                metadata.replies.length > 0 &&
+                !window.confirm(
+                  `Delete this thread? Its ${metadata.replies.length === 1 ? 'reply' : `${metadata.replies.length} replies`} will be deleted too.`
+                )
+              ) {
+                return;
+              }
+              onDelete(itemId, metadata.key);
+            }}
+          />
+          {metadata.replies.map((reply) =>
+            reply.kind === 'resolution' ? (
+              <ResolutionEvent
+                key={reply.id}
+                author={reply.author}
+                createdAt={reply.createdAt}
+                message={reply.message}
+              />
+            ) : (
+              <ThreadMessage
+                key={reply.id}
+                author={reply.author}
+                createdAt={reply.createdAt}
+                message={reply.message}
+                kind="reply"
+                onSaveEdit={(message) =>
+                  onEditReply(metadata.key, reply.id, message)
+                }
+                onDelete={() => void onDeleteReply(metadata.key, reply.id)}
+              />
+            )
+          )}
+          <ReplyComposer
+            onReply={(message) => onReply(metadata.key, message)}
+          />
+          <ThreadFooter
+            resolved={metadata.resolved}
+            onToggleResolved={() =>
+              onToggleResolved(itemId, metadata.key, !metadata.resolved)
+            }
+          />
+        </>
+      )}
+    </div>
+  );
+});
+
+interface ThreadHeaderProps {
+  collapsed: boolean;
+  range: SavedCommentMetadata['range'];
+  replyCount: number;
+  resolved: boolean;
+  outdated: boolean;
+  onToggle(): void;
+}
+
+function ThreadHeader({
+  collapsed,
+  range,
+  replyCount,
+  resolved,
+  outdated,
+  onToggle,
+}: ThreadHeaderProps) {
+  return (
+    <div
+      className={cn(
+        'flex min-w-0 items-center gap-2 px-2.5 py-2 text-[12px]',
+        !collapsed && cn('border-b', threadBorder)
+      )}
+    >
+      <button
+        type="button"
+        aria-expanded={!collapsed}
+        aria-label={collapsed ? 'Expand thread' : 'Collapse thread'}
+        title={collapsed ? 'Expand thread' : 'Collapse thread'}
+        className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm transition"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle();
+        }}
       >
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          className="font-medium"
-          onClick={() =>
-            onToggleResolved(itemId, metadata.key, !metadata.resolved)
-          }
-        >
-          {metadata.resolved
-            ? 'Unresolve conversation'
-            : 'Resolve conversation'}
-        </Button>
-        {metadata.resolved && (
+        <IconChevronSm
+          aria-hidden="true"
+          className={cn(
+            'size-4 transition-transform',
+            collapsed && '-rotate-90'
+          )}
+        />
+      </button>
+      <span className="min-w-0 flex-1 truncate font-medium">
+        Comment on {formatThreadRange(range)}
+      </span>
+      {replyCount > 0 && (
+        <span className={cn('shrink-0', mutedText)}>
+          {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
+        </span>
+      )}
+      {outdated && (
+        <span className="inline-flex shrink-0 items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+          Outdated
+        </span>
+      )}
+      {resolved && (
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-600/15 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+          <IconCheck size={10} />
+          Resolved
+        </span>
+      )}
+    </div>
+  );
+}
+
+function formatThreadRange(range: SavedCommentMetadata['range']): string {
+  const start = formatRangeEndpoint(range.start, range.side);
+  const end = formatRangeEndpoint(range.end, range.endSide ?? range.side);
+  if (range.start === range.end && start === end) {
+    return `line ${end}`;
+  }
+  return `lines ${start} to ${end}`;
+}
+
+function formatRangeEndpoint(
+  lineNumber: number,
+  side: SavedCommentMetadata['range']['side']
+): string {
+  if (side === 'additions') {
+    return `R${lineNumber}`;
+  }
+  if (side === 'deletions') {
+    return `L${lineNumber}`;
+  }
+  return `${lineNumber}`;
+}
+
+interface ResolutionEventProps {
+  author: string;
+  createdAt: string;
+  message: string;
+}
+
+// System event shown inline with replies when someone resolves the thread.
+// A non-empty message is the resolution note from the PATCH request.
+function ResolutionEvent({ author, createdAt, message }: ResolutionEventProps) {
+  return (
+    <div
+      className={cn(
+        'flex items-start gap-2 border-t px-3 py-2.5',
+        threadBorder
+      )}
+    >
+      <span className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-emerald-600/15 text-emerald-600 dark:text-emerald-400">
+        <IconCheck size={13} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+          <strong className="truncate text-[13px]">{author}</strong>
           <span className={cn('text-[12px]', mutedText)}>
-            <strong className="font-medium">
-              {metadata.resolvedBy ?? 'someone'}
-            </strong>{' '}
-            marked this conversation as resolved
+            resolved this conversation
           </span>
+          <span className={cn('shrink-0 text-[12px]', mutedText)}>
+            {formatRelativeTime(createdAt)}
+          </span>
+        </div>
+        {message !== '' && (
+          <p className="m-0 pt-1 text-[14px] whitespace-pre-wrap">{message}</p>
         )}
       </div>
     </div>
   );
-});
+}
+
+interface ThreadFooterProps {
+  resolved: boolean;
+  onToggleResolved(): void;
+}
+
+function ThreadFooter({ resolved, onToggleResolved }: ThreadFooterProps) {
+  return (
+    <div
+      className={cn(
+        'flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t px-3 py-2',
+        threadBorder
+      )}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <Button
+        type="button"
+        variant="outline"
+        size="xs"
+        className="font-medium"
+        onClick={onToggleResolved}
+      >
+        {resolved ? 'Unresolve conversation' : 'Resolve conversation'}
+      </Button>
+    </div>
+  );
+}
 
 interface ThreadMessageProps {
   author: string;

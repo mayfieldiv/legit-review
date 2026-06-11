@@ -60,9 +60,14 @@ describe('store', () => {
     const resolved = await updateComment(REPO, BRANCH, created.id, {
       resolved: true,
       resolvedBy: 'claude',
+      resolutionNote: 'Fixed in abc123.',
     });
     expect(resolved?.resolved).toBe(true);
     expect(resolved?.resolvedBy).toBe('claude');
+    expect(resolved?.replies).toHaveLength(1);
+    expect(resolved?.replies[0]?.kind).toBe('resolution');
+    expect(resolved?.replies[0]?.author).toBe('claude');
+    expect(resolved?.replies[0]?.message).toBe('Fixed in abc123.');
 
     const reopened = await updateComment(REPO, BRANCH, created.id, {
       resolved: false,
@@ -93,6 +98,7 @@ describe('store', () => {
       author: 'claude',
     });
     expect(withReply?.replies).toHaveLength(1);
+    expect(withReply?.replies[0]?.kind).toBe('reply');
     expect(withReply?.replies[0]?.author).toBe('claude');
     const replyId = withReply?.replies[0]?.id as string;
 
@@ -154,6 +160,7 @@ describe('store', () => {
     const state = await readState(repo, 'main');
     const migrated = state.comments[0];
     expect(migrated?.replies).toHaveLength(1);
+    expect(migrated?.replies[0]?.kind).toBe('resolution');
     expect(migrated?.replies[0]?.author).toBe('claude');
     expect(migrated?.replies[0]?.message).toBe('Fixed in abc123');
     expect(

@@ -11,6 +11,7 @@ import {
   listUntrackedFiles,
   loadDiffFileContents,
   resolveLocalDiffSource,
+  resolveRepoReviewScopes,
   synthesizeUntrackedPatch,
 } from '../lib/git';
 
@@ -152,6 +153,90 @@ describe('resolveLocalDiffSource', () => {
   });
 });
 
+describe('resolveRepoReviewScopes', () => {
+  test('reports default base, upstream delta, and dirty working tree', async () => {
+    const remote = path.join(baseDir, 'scope-remote.git');
+    await mkdir(remote, { recursive: true });
+    git(remote, 'init', '--bare', '-b', 'main');
+
+    const repo = path.join(baseDir, 'scope-repo');
+    await initRepo(repo);
+    await writeFile(path.join(repo, 'tracked.txt'), 'base\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'base');
+    git(repo, 'remote', 'add', 'origin', remote);
+    git(repo, 'push', '-u', 'origin', 'main');
+    git(repo, 'checkout', '-b', 'feature');
+    git(repo, 'push', '-u', 'origin', 'feature');
+
+    await writeFile(path.join(repo, 'committed.txt'), 'unpushed\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'unpushed');
+    await writeFile(path.join(repo, 'tracked.txt'), 'dirty\n');
+    await writeFile(path.join(repo, 'scratch.txt'), 'untracked\n');
+
+    const scopes = await resolveRepoReviewScopes(repo);
+
+    expect(scopes.branch).toBe('feature');
+    expect(scopes.defaultBaseRef).toBe('main');
+    expect(scopes.upstreamRef).toBe('origin/feature');
+    expect(scopes.aheadCount).toBe(1);
+    expect(scopes.dirtyPathCount).toBe(2);
+    expect(scopes.untrackedPathCount).toBe(1);
+    expect(scopes.hasUncommittedChanges).toBe(true);
+    expect(scopes.hasUnpushedChanges).toBe(true);
+    expect(
+      scopes.options.find((option) => option.id === 'branch-base')
+    ).toMatchObject({
+      available: true,
+      baseRef: null,
+      badge: 'main',
+    });
+    expect(
+      scopes.options.find((option) => option.id === 'unpushed')
+    ).toMatchObject({
+      available: true,
+      baseRef: 'origin/feature',
+      badge: '1 ahead',
+      hasChanges: true,
+    });
+    expect(
+      scopes.options.find((option) => option.id === 'uncommitted')
+    ).toMatchObject({
+      available: true,
+      baseRef: 'HEAD',
+      badge: '2 dirty',
+      hasChanges: true,
+    });
+  });
+
+  test('marks unpushed scope unavailable without an upstream', async () => {
+    const repo = path.join(baseDir, 'scope-no-upstream');
+    await initRepo(repo);
+    await writeFile(path.join(repo, 'a.txt'), 'one\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'init');
+
+    const scopes = await resolveRepoReviewScopes(repo);
+
+    expect(scopes.upstreamRef).toBeNull();
+    expect(scopes.hasUnpushedChanges).toBe(false);
+    expect(scopes.hasUncommittedChanges).toBe(false);
+    expect(
+      scopes.options.find((option) => option.id === 'unpushed')
+    ).toMatchObject({
+      available: false,
+      badge: 'no upstream',
+    });
+    expect(
+      scopes.options.find((option) => option.id === 'uncommitted')
+    ).toMatchObject({
+      available: true,
+      badge: 'clean',
+    });
+  });
+});
+
 describe('createLocalDiffStream', () => {
   test('streams tracked changes, renames, and untracked files', async () => {
     const repo = path.join(baseDir, 'stream');
@@ -238,6 +323,25 @@ describe('createLocalDiffStream', () => {
 
     const text = await collectDiffText(repo);
     expect(text).toBe('');
+  });
+
+  test('uses HEAD as the uncommitted-only base', async () => {
+    const repo = path.join(baseDir, 'uncommitted-base');
+    await initRepo(repo);
+    await writeFile(path.join(repo, 'base.txt'), 'base\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'base');
+    git(repo, 'checkout', '-b', 'feature');
+    await writeFile(path.join(repo, 'committed.txt'), 'committed\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'committed');
+    await writeFile(path.join(repo, 'scratch.txt'), 'dirty\n');
+
+    const text = await collectDiffText(repo, 'HEAD');
+
+    expect(text).not.toContain('committed.txt');
+    expect(text).toContain('scratch.txt');
+    expect(text).toContain('+dirty');
   });
 });
 

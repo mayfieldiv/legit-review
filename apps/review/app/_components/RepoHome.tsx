@@ -5,10 +5,11 @@ import {
   FolderGit2,
   GitBranch,
   History,
-  Play,
 } from 'lucide-react';
 import Link from 'next/link';
 
+import { RecentRepoScopeLinks } from './RecentRepoScopeLinks';
+import { RepoReviewForm } from './RepoReviewForm';
 import { listRecentRepoGroups, type RecentRepoGroup } from '@/lib/recentRepos';
 import type { ThreadCounts } from '@/lib/store';
 
@@ -40,35 +41,7 @@ export async function RepoHome() {
                 Open Repository
               </h2>
             </div>
-            <form action="/review" method="get" className="space-y-4">
-              <label className="block space-y-1.5">
-                <span className="text-sm font-medium">Repository path</span>
-                <input
-                  autoFocus
-                  className="border-input bg-background focus-visible:ring-ring/50 block h-9 w-full rounded-md border px-3 font-mono text-sm focus-visible:ring-2 focus-visible:outline-none"
-                  name="repo"
-                  placeholder="/absolute/path/to/repo"
-                  required
-                  type="text"
-                />
-              </label>
-              <label className="block space-y-1.5">
-                <span className="text-sm font-medium">Base ref</span>
-                <input
-                  className="border-input bg-background focus-visible:ring-ring/50 block h-9 w-full rounded-md border px-3 font-mono text-sm focus-visible:ring-2 focus-visible:outline-none"
-                  name="base"
-                  placeholder="main"
-                  type="text"
-                />
-              </label>
-              <button
-                className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring/50 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md px-4 text-sm font-medium transition focus-visible:ring-2 focus-visible:outline-none"
-                type="submit"
-              >
-                <Play className="size-4" />
-                Review
-              </button>
-            </form>
+            <RepoReviewForm />
           </section>
 
           <section aria-labelledby="recent-repos-heading" className="min-w-0">
@@ -118,13 +91,15 @@ function RecentRepoCard({ repo }: { repo: RecentRepoGroup }) {
       </div>
       <div className="divide-border divide-y">
         {repo.worktrees.map((worktree) => (
-          <Link
+          <div
             key={worktree.path}
-            className="group hover:bg-accent focus-visible:ring-ring/50 grid min-h-14 gap-2 px-4 py-3 transition focus-visible:ring-2 focus-visible:outline-none sm:grid-cols-[minmax(0,1fr)_auto]"
-            href={{ pathname: '/review', query: { repo: worktree.path } }}
-            prefetch={false}
+            className="hover:bg-accent/50 grid min-h-14 gap-3 px-4 py-3 transition sm:grid-cols-[minmax(0,1fr)_auto]"
           >
-            <div className="min-w-0">
+            <Link
+              className="group focus-visible:ring-ring/50 min-w-0 rounded-sm focus-visible:ring-2 focus-visible:outline-none"
+              href={{ pathname: '/review', query: { repo: worktree.path } }}
+              prefetch={false}
+            >
               <div className="flex min-w-0 items-center gap-2">
                 <GitBranch className="text-muted-foreground size-4 shrink-0" />
                 <span className="truncate text-sm font-medium">
@@ -135,16 +110,17 @@ function RecentRepoCard({ repo }: { repo: RecentRepoGroup }) {
                     detached
                   </span>
                 ) : null}
+                <ArrowRight className="text-muted-foreground group-hover:text-foreground ml-auto size-4 shrink-0 transition group-hover:translate-x-0.5" />
               </div>
               <p className="text-muted-foreground mt-1 truncate font-mono text-xs">
                 {worktree.path}
               </p>
-            </div>
-            <div className="flex items-center gap-3 text-xs sm:justify-end">
+            </Link>
+            <div className="flex min-w-0 flex-col gap-2 text-xs sm:items-end">
               <ThreadCountsInline counts={worktree.threadCounts} />
-              <ArrowRight className="text-muted-foreground group-hover:text-foreground size-4 shrink-0 transition group-hover:translate-x-0.5" />
+              <RecentRepoScopeLinks repoPath={worktree.path} />
             </div>
-          </Link>
+          </div>
         ))}
       </div>
     </article>

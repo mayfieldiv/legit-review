@@ -32,6 +32,40 @@ export interface LocalDiffSource {
   mergeBase: string | undefined;
 }
 
+export type ReviewScopeId = 'branch-base' | 'unpushed' | 'uncommitted';
+
+export interface ReviewScopeOption {
+  id: ReviewScopeId;
+  label: string;
+  shortLabel: string;
+  baseRef: string | null;
+  refLabel: string;
+  detail: string;
+  badge: string;
+  available: boolean;
+  hasChanges: boolean;
+  disabledReason?: string;
+}
+
+export interface RepoReviewScopes {
+  repoPath: string;
+  branch: string;
+  defaultBaseRef: string;
+  upstreamRef: string | null;
+  aheadCount: number;
+  behindCount: number;
+  dirtyPathCount: number;
+  untrackedPathCount: number;
+  hasUncommittedChanges: boolean;
+  hasUnpushedChanges: boolean;
+  options: ReviewScopeOption[];
+}
+
+interface WorkingTreeSummary {
+  dirtyPathCount: number;
+  untrackedPathCount: number;
+}
+
 interface GitResult {
   code: number;
   stdout: Buffer;
@@ -137,6 +171,222 @@ async function resolveBaseRef(
     }
   }
   return 'HEAD';
+}
+
+export async function resolveRepoReviewScopes(
+  repoInput: string
+): Promise<RepoReviewScopes> {
+  const { repoPath, branch } = await resolveRepoIdentity(repoInput);
+  const [defaultBaseRef, headSha, workingTree, upstreamRef] = await Promise.all(
+    [
+      resolveBaseRef(repoPath, null),
+      gitText(repoPath, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']),
+      summarizeWorkingTree(repoPath),
+      resolveUpstreamRef(repoPath),
+    ]
+  );
+
+  const hasHead = headSha != null && headSha !== '';
+  const upstreamCounts =
+    upstreamRef != null && hasHead
+      ? await countUpstreamDelta(repoPath, upstreamRef)
+      : { aheadCount: 0, behindCount: 0 };
+  const hasUncommittedChanges = workingTree.dirtyPathCount > 0;
+  const hasUnpushedChanges = upstreamCounts.aheadCount > 0;
+
+  return {
+    repoPath,
+    branch,
+    defaultBaseRef,
+    upstreamRef,
+    aheadCount: upstreamCounts.aheadCount,
+    behindCount: upstreamCounts.behindCount,
+    dirtyPathCount: workingTree.dirtyPathCount,
+    untrackedPathCount: workingTree.untrackedPathCount,
+    hasUncommittedChanges,
+    hasUnpushedChanges,
+    options: buildReviewScopeOptions({
+      defaultBaseRef,
+      upstreamRef,
+      hasHead,
+      hasUncommittedChanges,
+      hasUnpushedChanges,
+      dirtyPathCount: workingTree.dirtyPathCount,
+      aheadCount: upstreamCounts.aheadCount,
+      behindCount: upstreamCounts.behindCount,
+    }),
+  };
+}
+
+async function resolveUpstreamRef(repoPath: string): Promise<string | null> {
+  const upstream = await gitText(repoPath, [
+    'rev-parse',
+    '--abbrev-ref',
+    '--symbolic-full-name',
+    '@{upstream}',
+  ]);
+  return upstream == null || upstream === '' ? null : upstream;
+}
+
+async function countUpstreamDelta(
+  repoPath: string,
+  upstreamRef: string
+): Promise<{ aheadCount: number; behindCount: number }> {
+  const output = await gitText(repoPath, [
+    'rev-list',
+    '--left-right',
+    '--count',
+    `${upstreamRef}...HEAD`,
+  ]);
+  if (output == null || output === '') {
+    return { aheadCount: 0, behindCount: 0 };
+  }
+
+  const [behindRaw, aheadRaw] = output.split(/\s+/, 2);
+  return {
+    aheadCount: Number(aheadRaw ?? 0),
+    behindCount: Number(behindRaw ?? 0),
+  };
+}
+
+async function summarizeWorkingTree(
+  repoPath: string
+): Promise<WorkingTreeSummary> {
+  const result = await runGit(repoPath, [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+    '--no-renames',
+  ]);
+  if (result.code !== 0) {
+    throw new Error(`git status exited with ${result.code}: ${result.stderr}`);
+  }
+
+  let dirtyPathCount = 0;
+  let untrackedPathCount = 0;
+  const records = result.stdout.toString('utf8').split('\0');
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index];
+    if (!isPorcelainStatusRecord(record)) {
+      continue;
+    }
+
+    dirtyPathCount++;
+    const status = record.slice(0, 2);
+    if (status === '??') {
+      untrackedPathCount++;
+    }
+    if (status[0] === 'R' || status[0] === 'C') {
+      index++;
+    }
+  }
+
+  return { dirtyPathCount, untrackedPathCount };
+}
+
+function isPorcelainStatusRecord(record: string): boolean {
+  if (record.length < 4 || record[2] !== ' ') {
+    return false;
+  }
+  const x = record[0];
+  const y = record[1];
+  return x !== ' ' || y !== ' ';
+}
+
+function buildReviewScopeOptions({
+  defaultBaseRef,
+  upstreamRef,
+  hasHead,
+  hasUncommittedChanges,
+  hasUnpushedChanges,
+  dirtyPathCount,
+  aheadCount,
+  behindCount,
+}: {
+  defaultBaseRef: string;
+  upstreamRef: string | null;
+  hasHead: boolean;
+  hasUncommittedChanges: boolean;
+  hasUnpushedChanges: boolean;
+  dirtyPathCount: number;
+  aheadCount: number;
+  behindCount: number;
+}): ReviewScopeOption[] {
+  const upstreamAvailable = upstreamRef != null && hasHead;
+
+  return [
+    {
+      id: 'branch-base',
+      label: 'Branch base',
+      shortLabel: 'Base',
+      baseRef: null,
+      refLabel: defaultBaseRef,
+      detail:
+        defaultBaseRef === 'HEAD'
+          ? 'Working tree against HEAD'
+          : `All changes since ${defaultBaseRef}`,
+      badge: defaultBaseRef,
+      available: true,
+      hasChanges: hasUncommittedChanges || hasUnpushedChanges,
+    },
+    {
+      id: 'unpushed',
+      label: 'Unpushed changes',
+      shortLabel: 'Unpushed',
+      baseRef: upstreamRef,
+      refLabel: upstreamRef ?? 'No upstream',
+      detail: upstreamDetail(upstreamRef, aheadCount, behindCount),
+      badge:
+        upstreamRef == null
+          ? 'no upstream'
+          : aheadCount === 0
+            ? '0 ahead'
+            : `${aheadCount} ahead`,
+      available: upstreamAvailable,
+      hasChanges: hasUnpushedChanges,
+      disabledReason: upstreamAvailable ? undefined : 'No upstream branch',
+    },
+    {
+      id: 'uncommitted',
+      label: 'Uncommitted changes',
+      shortLabel: 'Uncommitted',
+      baseRef: 'HEAD',
+      refLabel: 'HEAD',
+      detail: hasUncommittedChanges
+        ? `${dirtyPathCount} dirty ${dirtyPathCount === 1 ? 'path' : 'paths'}`
+        : 'Working tree clean',
+      badge: hasUncommittedChanges ? `${dirtyPathCount} dirty` : 'clean',
+      available: hasHead,
+      hasChanges: hasUncommittedChanges,
+      disabledReason: hasHead ? undefined : 'Repository has no commits yet',
+    },
+  ];
+}
+
+function upstreamDetail(
+  upstreamRef: string | null,
+  aheadCount: number,
+  behindCount: number
+): string {
+  if (upstreamRef == null) {
+    return 'No upstream configured';
+  }
+  if (aheadCount === 0 && behindCount === 0) {
+    return `No unpushed commits relative to ${upstreamRef}`;
+  }
+  const parts: string[] = [];
+  if (aheadCount > 0) {
+    parts.push(
+      `${aheadCount} ${aheadCount === 1 ? 'commit' : 'commits'} ahead`
+    );
+  }
+  if (behindCount > 0) {
+    parts.push(
+      `${behindCount} ${behindCount === 1 ? 'commit' : 'commits'} behind`
+    );
+  }
+  return `${parts.join(', ')} relative to ${upstreamRef}`;
 }
 
 export interface RepoIdentity {

@@ -8,8 +8,7 @@ import {
   createComment,
   deleteComment,
   readState,
-  setFileViewed,
-  setHunksViewed,
+  setViewedMarks,
   stateFilePath,
   updateComment,
 } from '../lib/store';
@@ -91,22 +90,56 @@ describe('store', () => {
   });
 
   test('viewed marks round-trip and clear', async () => {
-    await setHunksViewed(REPO, BRANCH, 'src/app.ts', ['h1', 'h2'], true);
-    await setHunksViewed(REPO, BRANCH, 'src/app.ts', ['h3'], true);
+    await setViewedMarks(REPO, BRANCH, 'src/app.ts', {
+      viewed: true,
+      hunkHashes: ['h1', 'h2'],
+    });
+    await setViewedMarks(REPO, BRANCH, 'src/app.ts', {
+      viewed: true,
+      hunkHashes: ['h3'],
+    });
     let state = await readState(REPO, BRANCH);
     expect(state.viewedHunks['src/app.ts']).toEqual(['h1', 'h2', 'h3']);
 
-    await setHunksViewed(REPO, BRANCH, 'src/app.ts', ['h1', 'h2', 'h3'], false);
+    await setViewedMarks(REPO, BRANCH, 'src/app.ts', {
+      viewed: false,
+      hunkHashes: ['h1', 'h2', 'h3'],
+    });
     state = await readState(REPO, BRANCH);
     expect(state.viewedHunks['src/app.ts']).toBeUndefined();
 
-    await setFileViewed(REPO, BRANCH, 'src/app.ts', 'filehash');
+    await setViewedMarks(REPO, BRANCH, 'src/app.ts', {
+      viewed: true,
+      fileHash: 'filehash',
+    });
     state = await readState(REPO, BRANCH);
     expect(state.viewedFiles['src/app.ts']).toBe('filehash');
 
-    await setFileViewed(REPO, BRANCH, 'src/app.ts', null);
+    await setViewedMarks(REPO, BRANCH, 'src/app.ts', { viewed: false });
     state = await readState(REPO, BRANCH);
     expect(state.viewedFiles['src/app.ts']).toBeUndefined();
+  });
+
+  test('combined marks apply atomically and unview clears the file mark', async () => {
+    // Whole-file toggle: every hunk plus the file mark in one mutation.
+    await setViewedMarks(REPO, BRANCH, 'src/whole.ts', {
+      viewed: true,
+      hunkHashes: ['h1', 'h2'],
+      fileHash: 'fh',
+    });
+    let state = await readState(REPO, BRANCH);
+    expect(state.viewedHunks['src/whole.ts']).toEqual(['h1', 'h2']);
+    expect(state.viewedFiles['src/whole.ts']).toBe('fh');
+
+    // Unviewing a single hunk also drops the file-level mark — the file is
+    // no longer fully viewed.
+    await setViewedMarks(REPO, BRANCH, 'src/whole.ts', {
+      viewed: false,
+      hunkHashes: ['h1'],
+    });
+    state = await readState(REPO, BRANCH);
+    expect(state.viewedHunks['src/whole.ts']).toEqual(['h2']);
+    expect(state.viewedFiles['src/whole.ts']).toBeUndefined();
   });
 
   test('concurrent mutations serialize without losing writes', async () => {

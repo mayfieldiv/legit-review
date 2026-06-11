@@ -79,6 +79,9 @@ interface UsePatchLoaderOptions {
 
 interface UsePatchLoaderResult {
   applyCollapseModeToLoaded(mode: 'expanded' | 'collapsed'): void;
+  applyViewedMarks(
+    marks: Pick<ReviewStateResponse, 'viewedFiles' | 'viewedHunks'>
+  ): boolean;
   commentFileByItemId: CodeViewCommentFileByItemId | null;
   commentSections: CodeViewSavedCommentItem[];
   diffStats: CodeViewDiffStats | null;
@@ -149,6 +152,15 @@ export function usePatchLoader({
   // touch collapse when the viewed state actually changed, so a manual
   // expand of a viewed file survives unrelated state updates.
   const lastAppliedViewedByItemIdRef = useRef<Map<string, boolean>>(new Map());
+  // Serialized form of the server-derived annotations (viewed pills + saved
+  // comments) last applied to each item. applyServerState walks every loaded
+  // item, but bumping an item's version invalidates its layout and render
+  // caches in the viewer — on large diffs, re-rendering all files per viewed
+  // toggle is what made toggles feel slow. Items whose derived annotations
+  // and collapse state are unchanged are skipped entirely.
+  const lastAppliedAnnotationsByItemIdRef = useRef<Map<string, string>>(
+    new Map()
+  );
   // Mirrors the latest collapse mode so the streaming code path (which lives
   // inside a long-lived effect/closure) can read the live value without us
   // having to re-bind it on every change.
@@ -338,16 +350,11 @@ export function usePatchLoader({
         }
 
         const serverAnnotations = annotationsByItemId.get(item.id) ?? [];
-        const drafts = (item.annotations ?? []).filter(isDraftAnnotation);
-        item.annotations = [
-          ...drafts,
-          ...pillAnnotations,
-          ...serverAnnotations,
-        ];
 
         // Viewed files stay collapsed. Only touch `collapsed` when the
         // viewed state changed so manual expand/collapse survives unrelated
         // refreshes.
+        let collapseChanged = false;
         if (fileHashes != null) {
           const fileViewed = computeFileViewed(
             state.viewedFiles,
@@ -360,9 +367,35 @@ export function usePatchLoader({
           if (lastApplied !== fileViewed) {
             lastAppliedViewedByItemIdRef.current.set(item.id, fileViewed);
             item.collapsed = fileViewed;
+            collapseChanged = true;
           }
         }
 
+        // Skip the viewer update when nothing this pass derives for the item
+        // changed; updateItem invalidates the item's layout/render caches and
+        // doing that for every file made state refreshes scale with diff size.
+        const annotationSignature = JSON.stringify([
+          pillAnnotations,
+          serverAnnotations,
+        ]);
+        if (
+          !collapseChanged &&
+          lastAppliedAnnotationsByItemIdRef.current.get(item.id) ===
+            annotationSignature
+        ) {
+          continue;
+        }
+        lastAppliedAnnotationsByItemIdRef.current.set(
+          item.id,
+          annotationSignature
+        );
+
+        const drafts = (item.annotations ?? []).filter(isDraftAnnotation);
+        item.annotations = [
+          ...drafts,
+          ...pillAnnotations,
+          ...serverAnnotations,
+        ];
         item.version = getNextItemVersion(item);
         viewer?.updateItem(item);
       }
@@ -418,6 +451,31 @@ export function usePatchLoader({
     setReviewState(state);
     applyServerState(state);
   });
+
+  // Applies the viewed marks a PUT /api/viewed response returns, without a
+  // second /api/state round trip. Viewed toggles never change comments, so
+  // merging the marks into the cached state is exact, not approximate.
+  // Returns false when review state hasn't hydrated yet (caller falls back
+  // to a full refresh).
+  const applyViewedMarks = useStableCallback(
+    (
+      marks: Pick<ReviewStateResponse, 'viewedFiles' | 'viewedHunks'>
+    ): boolean => {
+      const current = reviewStateRef.current;
+      if (current == null) {
+        return false;
+      }
+      const next: ReviewStateResponse = {
+        ...current,
+        viewedFiles: marks.viewedFiles,
+        viewedHunks: marks.viewedHunks,
+      };
+      reviewStateRef.current = next;
+      setReviewState(next);
+      applyServerState(next);
+      return true;
+    }
+  );
 
   const getFileHunkHashes = useStableCallback(
     (filePath: string): FileHunkHashes | undefined =>
@@ -476,6 +534,7 @@ export function usePatchLoader({
     fileHashesByPathRef.current = new Map();
     reviewStateRef.current = null;
     lastAppliedViewedByItemIdRef.current = new Map();
+    lastAppliedAnnotationsByItemIdRef.current = new Map();
     setReviewState(null);
     setViewerKey(requestId);
     setInitialItems([]);
@@ -798,6 +857,7 @@ export function usePatchLoader({
 
   return {
     applyCollapseModeToLoaded,
+    applyViewedMarks,
     commentFileByItemId,
     commentSections,
     diffStats,

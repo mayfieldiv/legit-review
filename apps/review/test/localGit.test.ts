@@ -100,6 +100,20 @@ describe('resolveLocalDiffSource', () => {
     expect(source.baseRef).toBe('HEAD');
   });
 
+  test('resolves identity inside a linked worktree (.git pointer file)', async () => {
+    const repo = path.join(baseDir, 'worktree-main');
+    await initRepo(repo);
+    await writeFile(path.join(repo, 'a.txt'), 'one\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'init');
+    const linked = path.join(baseDir, 'worktree-linked');
+    git(repo, 'worktree', 'add', '-qb', 'wt-branch', linked);
+
+    const source = await resolveLocalDiffSource(linked, 'main');
+    expect(source.repoPath).toBe(linked);
+    expect(source.branch).toBe('wt-branch');
+  });
+
   test('reports detached HEAD as branch HEAD', async () => {
     const repo = path.join(baseDir, 'detached');
     await initRepo(repo);

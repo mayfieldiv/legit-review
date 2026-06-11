@@ -221,41 +221,44 @@ export async function deleteComment(
   return deleted;
 }
 
-export async function setHunksViewed(
-  repoPath: string,
-  branch: string,
-  filePath: string,
-  hunkHashes: string[],
-  viewed: boolean
-): Promise<ReviewState> {
-  return mutateState(repoPath, branch, (state) => {
-    const current = new Set(state.viewedHunks[filePath] ?? []);
-    for (const hash of hunkHashes) {
-      if (viewed) {
-        current.add(hash);
-      } else {
-        current.delete(hash);
-      }
-    }
-    if (current.size === 0) {
-      delete state.viewedHunks[filePath];
-    } else {
-      state.viewedHunks[filePath] = [...current].sort();
-    }
-  });
+export interface ViewedMarksInput {
+  viewed: boolean;
+  hunkHashes?: string[];
+  fileHash?: string;
 }
 
-export async function setFileViewed(
+// Applies hunk- and file-level viewed marks for one file in a single
+// serialized mutation, so a whole-file toggle is one write instead of two.
+// Unviewing always clears the file-level mark: a file with any explicitly
+// unviewed hunk is no longer "viewed", regardless of the stored file hash.
+export async function setViewedMarks(
   repoPath: string,
   branch: string,
   filePath: string,
-  fileHash: string | null
+  input: ViewedMarksInput
 ): Promise<ReviewState> {
   return mutateState(repoPath, branch, (state) => {
-    if (fileHash == null) {
-      delete state.viewedFiles[filePath];
+    if (input.hunkHashes != null) {
+      const current = new Set(state.viewedHunks[filePath] ?? []);
+      for (const hash of input.hunkHashes) {
+        if (input.viewed) {
+          current.add(hash);
+        } else {
+          current.delete(hash);
+        }
+      }
+      if (current.size === 0) {
+        delete state.viewedHunks[filePath];
+      } else {
+        state.viewedHunks[filePath] = [...current].sort();
+      }
+    }
+    if (input.viewed) {
+      if (input.fileHash != null) {
+        state.viewedFiles[filePath] = input.fileHash;
+      }
     } else {
-      state.viewedFiles[filePath] = fileHash;
+      delete state.viewedFiles[filePath];
     }
   });
 }

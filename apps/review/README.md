@@ -53,7 +53,7 @@ Loopback-only REST, keyed by `?repo=<absolute path>`:
 | `POST /api/comments`                           | Create a comment                                                                |
 | `PATCH /api/comments/:id`                      | Edit / resolve (`{"resolved":true,"resolvedBy":"claude","resolutionNote":"…"}`) |
 | `DELETE /api/comments/:id`                     | Delete                                                                          |
-| `PUT /api/viewed`                              | Set/clear hunk- or file-level viewed marks                                      |
+| `PUT /api/viewed`                              | Set/clear viewed marks (hunk- and/or file-level, one call)                      |
 | `GET /api/events`                              | SSE: `diff-changed`, `state-changed`                                            |
 | `GET /api/diff`                                | The unified diff the viewer renders                                             |
 

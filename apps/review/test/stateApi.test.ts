@@ -196,4 +196,36 @@ describe('review state API', () => {
     };
     expect(cleared.viewedFiles['a.txt']).toBeUndefined();
   });
+
+  test('combined hunk + file marks in one request; unview clears file mark', async () => {
+    const combinedResponse = await putViewedRoute(
+      jsonRequest(apiUrl('/api/viewed'), 'PUT', {
+        filePath: 'b.txt',
+        viewed: true,
+        hunkHashes: ['h1', 'h2'],
+        fileHash: 'fh',
+      })
+    );
+    expect(combinedResponse.status).toBe(200);
+    const combined = (await combinedResponse.json()) as {
+      viewedFiles: Record<string, string>;
+      viewedHunks: Record<string, string[]>;
+    };
+    expect(combined.viewedHunks['b.txt']).toEqual(['h1', 'h2']);
+    expect(combined.viewedFiles['b.txt']).toBe('fh');
+
+    const unviewResponse = await putViewedRoute(
+      jsonRequest(apiUrl('/api/viewed'), 'PUT', {
+        filePath: 'b.txt',
+        viewed: false,
+        hunkHashes: ['h1'],
+      })
+    );
+    const unviewed = (await unviewResponse.json()) as {
+      viewedFiles: Record<string, string>;
+      viewedHunks: Record<string, string[]>;
+    };
+    expect(unviewed.viewedHunks['b.txt']).toEqual(['h2']);
+    expect(unviewed.viewedFiles['b.txt']).toBeUndefined();
+  });
 });

@@ -8,43 +8,36 @@ import {
   requireRepoIdentity,
 } from '@/lib/api';
 import { emitReviewEvent } from '@/lib/events';
-import { setFileViewed, setHunksViewed } from '@/lib/store';
+import { setViewedMarks } from '@/lib/store';
 
 const viewedSchema = z.object({
   filePath: z.string().min(1),
   viewed: z.boolean(),
-  // Hunk-level marks. When present, fileHash is ignored.
+  // Hunk-level marks to set or clear.
   hunkHashes: z.array(z.string().min(1)).nonempty().optional(),
-  // File-level mark; required when marking a file viewed (viewed: true).
+  // File-level mark; required when marking a whole file viewed.
   fileHash: z.string().min(1).optional(),
 });
 
-// Sets or clears viewed marks for hunks or a whole file.
+// Sets or clears viewed marks. Hunk- and file-level marks for one file can be
+// combined in a single request (the whole-file toggle sends both), and they
+// apply as one store mutation. Unviewing always clears the file-level mark.
 export async function PUT(request: Request) {
   try {
     const { repoPath, branch } = await requireRepoIdentity(request);
     const input = await parseJsonBody(request, viewedSchema);
-
-    let state;
-    if (input.hunkHashes != null) {
-      state = await setHunksViewed(
-        repoPath,
-        branch,
-        input.filePath,
-        input.hunkHashes,
-        input.viewed
-      );
-    } else {
-      if (input.viewed && input.fileHash == null) {
-        throw new ApiError('fileHash is required to mark a file viewed', 400);
-      }
-      state = await setFileViewed(
-        repoPath,
-        branch,
-        input.filePath,
-        input.viewed ? (input.fileHash as string) : null
+    if (input.viewed && input.hunkHashes == null && input.fileHash == null) {
+      throw new ApiError(
+        'hunkHashes or fileHash is required to mark viewed',
+        400
       );
     }
+
+    const state = await setViewedMarks(repoPath, branch, input.filePath, {
+      viewed: input.viewed,
+      hunkHashes: input.hunkHashes,
+      fileHash: input.fileHash,
+    });
 
     emitReviewEvent(repoPath, { type: 'state-changed' });
     return jsonResponse({

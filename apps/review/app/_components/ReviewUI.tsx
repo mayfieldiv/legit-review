@@ -26,6 +26,7 @@ import type {
   CommentMetadata,
   PersistCommentInput,
   ReviewStateComment,
+  ReviewStateResponse,
   SavedCommentMetadata,
 } from './types';
 import { usePatchLoader } from './usePatchLoader';
@@ -125,6 +126,7 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
   }, []);
   const {
     applyCollapseModeToLoaded,
+    applyViewedMarks,
     commentFileByItemId,
     commentSections,
     diffStats,
@@ -349,8 +351,9 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
     },
     [refreshReviewState, repo]
   );
-  // Sends a viewed-mark mutation and re-applies server state (which drives
-  // pill states and viewed-collapse).
+  // Sends a viewed-mark mutation. The PUT response carries the updated marks,
+  // which are applied to the loaded items directly — no /api/state refetch —
+  // so the pill/checkbox/collapse react as soon as the (local) server acks.
   const putViewedMarks = useCallback(
     async (body: Record<string, unknown>) => {
       try {
@@ -363,16 +366,24 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
         if (!response.ok) {
           throw new Error((await response.text()).trim());
         }
+        const marks = (await response.json()) as Pick<
+          ReviewStateResponse,
+          'viewedFiles' | 'viewedHunks'
+        >;
+        if (!applyViewedMarks(marks)) {
+          await refreshReviewState();
+        }
       } catch (error) {
         toast.error(
           error instanceof Error && error.message !== ''
             ? error.message
             : 'Failed to update viewed state.'
         );
+        // Re-sync so the controls reflect what the server actually stored.
+        await refreshReviewState();
       }
-      await refreshReviewState();
     },
-    [refreshReviewState, repo]
+    [applyViewedMarks, refreshReviewState, repo]
   );
   const handleToggleHunkViewed = useCallback(
     (itemId: string, hunkHash: string, viewed: boolean) => {
@@ -395,22 +406,16 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
       if (file == null || hashes == null) {
         return;
       }
-      void (async () => {
-        // Marking the file also marks all its hunks so the pills agree;
-        // clearing does the reverse.
-        if (hashes.hunkHashes.length > 0) {
-          await putViewedMarks({
-            filePath: file.path,
-            viewed,
-            hunkHashes: hashes.hunkHashes,
-          });
-        }
-        await putViewedMarks(
-          viewed
-            ? { filePath: file.path, viewed, fileHash: hashes.fileHash }
-            : { filePath: file.path, viewed }
-        );
-      })();
+      // One request covers both levels: the file-level mark plus every hunk
+      // mark, so the pills and the header checkbox always agree.
+      void putViewedMarks({
+        filePath: file.path,
+        viewed,
+        ...(hashes.hunkHashes.length > 0
+          ? { hunkHashes: hashes.hunkHashes }
+          : {}),
+        ...(viewed ? { fileHash: hashes.fileHash } : {}),
+      });
     },
     [commentFileByItemId, getFileHunkHashes, putViewedMarks]
   );

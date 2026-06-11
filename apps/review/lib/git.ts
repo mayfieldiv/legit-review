@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { open, realpath, stat } from 'node:fs/promises';
+import { open, readFile, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -130,6 +130,53 @@ function expandTilde(input: string): string {
   return input;
 }
 
+// Reads the HEAD ref content for the repo rooted at `dir`, or undefined when
+// `dir` is not a repo toplevel. Handles both layouts: `.git` as a directory
+// (regular repo) and `.git` as a "gitdir: <path>" pointer file (linked
+// worktrees, submodules).
+async function tryReadHead(dir: string): Promise<string | undefined> {
+  const gitEntry = path.join(dir, '.git');
+  try {
+    let gitDir: string;
+    if ((await stat(gitEntry)).isDirectory()) {
+      gitDir = gitEntry;
+    } else {
+      const pointer = (await readFile(gitEntry, 'utf8')).trim();
+      if (!pointer.startsWith('gitdir:')) {
+        return undefined;
+      }
+      const target = pointer.slice('gitdir:'.length).trim();
+      gitDir = path.isAbsolute(target) ? target : path.resolve(dir, target);
+    }
+    return (await readFile(path.join(gitDir, 'HEAD'), 'utf8')).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+// Walks from `startDir` toward the filesystem root looking for the nearest
+// directory whose `.git` resolves to a readable git dir — the same upward
+// discovery `git rev-parse --show-toplevel` performs. Implemented with file
+// reads instead of spawning git because identity is resolved on every API
+// request, and a process spawn from the loaded server costs orders of
+// magnitude more than these reads (it is what made viewed toggles lag).
+async function resolveGitToplevel(
+  startDir: string
+): Promise<{ repoPath: string; head: string } | undefined> {
+  let dir = startDir;
+  for (;;) {
+    const head = await tryReadHead(dir);
+    if (head != null) {
+      return { repoPath: dir, head };
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      return undefined;
+    }
+    dir = parent;
+  }
+}
+
 // Resolves user input to the canonical repo toplevel + current branch. Used
 // by every route so review state is keyed consistently no matter which
 // subdirectory or symlinked path the caller passed.
@@ -148,20 +195,18 @@ export async function resolveRepoIdentity(
     throw new GitRequestError(`No such directory: ${repoInput}`, 404);
   }
 
-  const repoPath = await gitText(realRepoPath, [
-    'rev-parse',
-    '--show-toplevel',
-  ]);
-  if (repoPath == null || repoPath === '') {
+  const resolved = await resolveGitToplevel(realRepoPath);
+  if (resolved == null) {
     throw new GitRequestError(`Not a git repository: ${repoInput}`);
   }
 
-  // Empty when HEAD is detached; fall back to the literal ref name.
-  const branch = await gitText(repoPath, ['branch', '--show-current']);
-  return {
-    repoPath,
-    branch: branch == null || branch === '' ? 'HEAD' : branch,
-  };
+  // HEAD is `ref: refs/heads/<branch>` on a branch; anything else (a bare
+  // SHA when detached, or a non-branch symbolic ref) maps to the literal
+  // name HEAD, matching what `git branch --show-current` reports as empty.
+  const branch = resolved.head.startsWith('ref: refs/heads/')
+    ? resolved.head.slice('ref: refs/heads/'.length)
+    : 'HEAD';
+  return { repoPath: resolved.repoPath, branch };
 }
 
 export async function resolveLocalDiffSource(

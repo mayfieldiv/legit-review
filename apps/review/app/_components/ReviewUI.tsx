@@ -263,7 +263,9 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
     [commentFileByItemId, setCommentSections]
   );
   // Persists a submitted draft. The hunk hash anchors the comment to the
-  // content it was written against so it can be flagged outdated later.
+  // content it was written against so it can be flagged outdated later;
+  // drafts on plain file items (out-of-diff files shown because they host
+  // comments) have no hunks, so they anchor by line snippet instead.
   const persistComment = useCallback(
     async (
       input: PersistCommentInput
@@ -273,11 +275,10 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
         toast.error('Could not resolve the file for this comment.');
         return null;
       }
-      const hunkIndex = getHunkIndexForLine(
-        input.fileDiff,
-        input.side,
-        input.range.end
-      );
+      const hunkIndex =
+        input.fileDiff == null
+          ? -1
+          : getHunkIndexForLine(input.fileDiff, input.side, input.range.end);
       const hunkHash =
         hunkIndex === -1
           ? ''
@@ -292,6 +293,7 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
             side: input.side,
             range: input.range,
             hunkHash,
+            lineSnippet: input.lineSnippet,
             message: input.message,
             author: 'user',
           }),
@@ -452,15 +454,23 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
   const handleSelectComment = useCallback(
     (comment: CodeViewSavedCommentEntry) => {
       setFileTreeOverlayOpen(false);
+      // Plain file items have a single pane: their selections and scroll
+      // targets must not carry a diff side.
+      const item = viewerRef.current?.getItem(comment.itemId);
+      const isFileItem = item?.type === 'file';
       viewerRef.current?.setSelectedLines({
         id: comment.itemId,
-        range: comment.range,
+        range: isFileItem
+          ? { start: comment.range.start, end: comment.range.end }
+          : comment.range,
       });
       viewerRef.current?.scrollTo({
         type: 'line',
         id: comment.itemId,
         lineNumber: comment.range.end,
-        side: comment.range.endSide ?? comment.range.side,
+        ...(isFileItem
+          ? {}
+          : { side: comment.range.endSide ?? comment.range.side }),
         align: 'center',
         behavior: 'smooth-auto',
       });

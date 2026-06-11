@@ -3,7 +3,6 @@ import type {
   ChangeTypes,
   CodeViewDiffItem,
   CodeViewItem,
-  DiffLineAnnotation,
   FileDiffMetadata,
 } from '@pierre/diffs';
 import type { GitStatus } from '@pierre/trees';
@@ -14,6 +13,7 @@ import type {
   CodeViewSavedCommentEntry,
   CodeViewSavedCommentEvent,
   CodeViewSavedCommentItem,
+  CommentAnnotation,
   CommentLineType,
   CommentMetadata,
   DraftCommentMetadata,
@@ -37,15 +37,32 @@ export function isDraftMetadata(
 }
 
 export function isDraftAnnotation(
-  annotation: DiffLineAnnotation<CommentMetadata>
-): annotation is DiffLineAnnotation<DraftCommentMetadata> {
+  annotation: CommentAnnotation
+): annotation is CommentAnnotation<DraftCommentMetadata> {
   return isDraftMetadata(annotation.metadata);
 }
 
 export function isSavedAnnotation(
-  annotation: DiffLineAnnotation<CommentMetadata>
-): annotation is DiffLineAnnotation<SavedCommentMetadata> {
+  annotation: CommentAnnotation
+): annotation is CommentAnnotation<SavedCommentMetadata> {
   return annotation.metadata.kind === 'saved';
+}
+
+// Reads the 1-based line from raw file contents, ignoring the empty string a
+// trailing newline produces. Returns undefined beyond EOF. Used to snippet
+// and outdated-check comments on plain file items, which have no diff hunks
+// to anchor against.
+export function getFileContentsLine(
+  contents: string,
+  lineNumber: number
+): string | undefined {
+  const lines = contents.split('\n');
+  if (lines.at(-1) === '') {
+    lines.pop();
+  }
+  return lineNumber >= 1 && lineNumber <= lines.length
+    ? lines[lineNumber - 1]
+    : undefined;
 }
 
 // Where a hunk's "Viewed" pill is anchored: the hunk's last rendered line.

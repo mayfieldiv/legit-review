@@ -1,6 +1,8 @@
 import type {
   AnnotationSide,
+  DiffLineAnnotation,
   FileDiffMetadata,
+  LineAnnotation,
   SelectedLineRange,
 } from '@pierre/diffs';
 import type { FileTreeGitStatusPatch, GitStatusEntry } from '@pierre/trees';
@@ -58,6 +60,12 @@ export type CommentMetadata =
   | DraftCommentMetadata
   | HunkViewedMetadata;
 
+// An annotation on either item kind: diff items carry a side, the plain
+// file items used for out-of-diff comments don't.
+export type CommentAnnotation<M extends CommentMetadata = CommentMetadata> =
+  | DiffLineAnnotation<M>
+  | LineAnnotation<M>;
+
 export interface CodeViewCommentSidebarFile {
   fileOrder: number;
   path: string;
@@ -75,9 +83,13 @@ export type CommentLineType = 'change' | 'context';
 
 // Everything the viewer knows about a draft when it is submitted; the
 // container resolves the file path + hunk hash and POSTs to the store.
+// `fileDiff` is absent for drafts on plain file items (out-of-diff files
+// rendered because they host comments) — those have no hunks to anchor to,
+// so the container sends an empty hunk hash with the line's text instead.
 export interface PersistCommentInput {
-  fileDiff: FileDiffMetadata;
+  fileDiff?: FileDiffMetadata;
   itemId: string;
+  lineSnippet?: string;
   message: string;
   range: SelectedLineRange;
   side: AnnotationSide;

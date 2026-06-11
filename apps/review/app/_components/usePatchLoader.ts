@@ -5,6 +5,7 @@ import {
   type CodeViewItem,
   type CodeViewLineSelection,
   type DiffLineAnnotation,
+  type LineAnnotation,
   processFile,
 } from '@pierre/diffs';
 import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
@@ -44,6 +45,7 @@ import {
 } from './streamGitPatchFiles';
 import type {
   CodeViewCommentFileByItemId,
+  CodeViewCommentSidebarFile,
   CodeViewDiffStats,
   CodeViewFileTreeSource,
   CodeViewSavedCommentEntry,
@@ -58,6 +60,7 @@ import type {
 import {
   classifyCommentLineType,
   computeFileViewed,
+  getFileContentsLine,
   getHunkViewedAnchor,
   isDraftAnnotation,
 } from './utils';
@@ -65,6 +68,7 @@ import {
   type FileHunkHashes,
   hashFileBlock,
   hashPatchFiles,
+  sha1Hex,
 } from '@/lib/hunkHash';
 
 const STREAM_PUBLISH_INTERVAL_MS = 100;
@@ -157,6 +161,17 @@ export function usePatchLoader({
   // Mirror of the latest server review state for synchronous reads from
   // render-time callbacks (e.g. the header Viewed checkbox).
   const reviewStateRef = useRef<ReviewStateResponse | null>(null);
+  // Working-tree contents for commented files that have no diff item, keyed
+  // by path. Such files render as plain (type 'file') items so out-of-diff
+  // comments still show with code context. null marks a path whose contents
+  // are unavailable (missing/binary/oversized) so it isn't refetched — its
+  // comments stay sidebar-only.
+  const extraFileContentsByPathRef = useRef<Map<string, string | null>>(
+    new Map()
+  );
+  // Paths with an /api/contents request in flight, so a state refresh that
+  // lands mid-fetch doesn't kick off a duplicate.
+  const extraFetchInFlightRef = useRef<Set<string>>(new Set());
   // Last viewed-state applied to each item's `collapsed` flag. Refreshes only
   // touch collapse when the viewed state actually changed, so a manual
   // expand of a viewed file survives unrelated state updates.
@@ -207,10 +222,7 @@ export function usePatchLoader({
         setInitialItems((prev) => {
           let changed = false;
           const next = prev.map((item) => {
-            if (
-              item.type !== 'diff' ||
-              (item.collapsed === true) === targetCollapsed
-            ) {
+            if ((item.collapsed === true) === targetCollapsed) {
               return item;
             }
             changed = true;
@@ -223,7 +235,7 @@ export function usePatchLoader({
 
       for (const itemId of loadedItemsByIdRef.current.keys()) {
         const item = viewer.getItem(itemId);
-        if (item == null || item.type !== 'diff') {
+        if (item == null) {
           continue;
         }
         const current = item.collapsed === true;
@@ -242,7 +254,9 @@ export function usePatchLoader({
   // collapse. Server state replaces all synthetic annotations while open
   // drafts are preserved, so this is idempotent and doubles as the refresh
   // path when an agent mutates comments or the diff is reloaded. Comments on
-  // files that left the diff get an orphan sidebar section (no annotation).
+  // files outside the diff mount those files as plain file items (contents
+  // fetched on demand); only files unreadable as text fall back to an
+  // orphan sidebar section with no annotation.
   const applyServerState = useStableCallback(
     (state: ReviewStateResponse): void => {
       const comments: readonly ReviewStateComment[] = state.comments;
@@ -251,15 +265,23 @@ export function usePatchLoader({
       let order = 0;
       for (const item of loadedItemsByIdRef.current.values()) {
         orderByItemId.set(item.id, order++);
-        if (item.type === 'diff') {
-          itemsByPath.set(item.fileDiff.name, item);
-        }
+        itemsByPath.set(
+          item.type === 'diff' ? item.fileDiff.name : item.file.name,
+          item
+        );
       }
 
       const annotationsByItemId = new Map<
         string,
         DiffLineAnnotation<CommentMetadata>[]
       >();
+      const fileAnnotationsByItemId = new Map<
+        string,
+        LineAnnotation<CommentMetadata>[]
+      >();
+      // Commented files with no item yet: contents are fetched async and
+      // this whole projection re-runs once their file items exist.
+      const pathsNeedingContents = new Set<string>();
       const sectionsByPath = new Map<string, CodeViewSavedCommentItem>();
       const sortedComments = [...comments].sort(
         (a, b) => a.range.end - b.range.end
@@ -267,13 +289,32 @@ export function usePatchLoader({
       for (const comment of sortedComments) {
         const item = itemsByPath.get(comment.filePath);
         const fileHashes = fileHashesByPathRef.current.get(comment.filePath);
-        // A comment is outdated when its anchor hunk's content hash no longer
-        // exists in the current diff (including the file leaving the diff
-        // entirely). Comments without a recorded hash can't be checked.
-        const outdated =
-          fileHashes == null ||
-          (comment.hunkHash !== '' &&
-            !fileHashes.hunkHashes.includes(comment.hunkHash));
+        const extraContents = extraFileContentsByPathRef.current.get(
+          comment.filePath
+        );
+        if (item == null && extraContents === undefined) {
+          pathsNeedingContents.add(comment.filePath);
+        }
+        // A hunk-anchored comment is outdated when its hunk's content hash no
+        // longer exists in the current diff. Out-of-diff comments (no hunk
+        // hash) are checked against the file's actual line text instead; with
+        // no text to check against (file in the diff: trust the anchor; file
+        // unreadable: assume stale) the snippet check is skipped.
+        let outdated: boolean;
+        if (comment.hunkHash !== '') {
+          outdated =
+            fileHashes == null ||
+            !fileHashes.hunkHashes.includes(comment.hunkHash);
+        } else if (fileHashes != null) {
+          outdated = false;
+        } else if (extraContents != null) {
+          outdated =
+            comment.lineSnippet !== '' &&
+            getFileContentsLine(extraContents, comment.range.end) !==
+              comment.lineSnippet;
+        } else {
+          outdated = extraContents === null;
+        }
         const metadata: SavedCommentMetadata = {
           kind: 'saved',
           key: comment.id,
@@ -294,6 +335,10 @@ export function usePatchLoader({
             metadata,
           });
           annotationsByItemId.set(item.id, annotations);
+        } else if (item != null) {
+          const annotations = fileAnnotationsByItemId.get(item.id) ?? [];
+          annotations.push({ lineNumber: comment.range.end, metadata });
+          fileAnnotationsByItemId.set(item.id, annotations);
         }
         const entry: CodeViewSavedCommentEntry = {
           author: comment.author,
@@ -307,7 +352,7 @@ export function usePatchLoader({
                   comment.side,
                   comment.range.end
                 )
-              : 'change',
+              : 'context',
           message: comment.message,
           outdated,
           range: comment.range,
@@ -329,7 +374,25 @@ export function usePatchLoader({
 
       const viewer = viewerRef.current;
       for (const item of loadedItemsByIdRef.current.values()) {
-        if (item.type !== 'diff') {
+        if (item.type === 'file') {
+          // Plain file items carry only saved-comment annotations: no viewed
+          // pills (nothing was changed) and no viewed-driven collapse.
+          const serverAnnotations = fileAnnotationsByItemId.get(item.id) ?? [];
+          const annotationSignature = JSON.stringify(serverAnnotations);
+          if (
+            lastAppliedAnnotationsByItemIdRef.current.get(item.id) ===
+            annotationSignature
+          ) {
+            continue;
+          }
+          lastAppliedAnnotationsByItemIdRef.current.set(
+            item.id,
+            annotationSignature
+          );
+          const drafts = (item.annotations ?? []).filter(isDraftAnnotation);
+          item.annotations = [...drafts, ...serverAnnotations];
+          item.version = getNextItemVersion(item);
+          viewer?.updateItem(item);
           continue;
         }
         const filePath = item.fileDiff.name;
@@ -412,6 +475,102 @@ export function usePatchLoader({
       setCommentSections(
         [...sectionsByPath.values()].sort((a, b) => a.fileOrder - b.fileOrder)
       );
+
+      if (pathsNeedingContents.size > 0) {
+        void loadExtraFileItems([...pathsNeedingContents]);
+      }
+    }
+  );
+
+  // Fetches working-tree contents for commented files outside the diff and
+  // mounts them as plain file items so their comments render with code
+  // context, then re-projects review state to attach the annotations.
+  // Unreadable paths are cached as null so their comments stay sidebar-only
+  // without refetching; transport failures stay uncached and retry on the
+  // next state refresh.
+  const loadExtraFileItems = useStableCallback(
+    async (paths: string[]): Promise<void> => {
+      const requestId = requestIdRef.current;
+      const newPaths = paths.filter(
+        (path) =>
+          !extraFileContentsByPathRef.current.has(path) &&
+          !extraFetchInFlightRef.current.has(path)
+      );
+      if (newPaths.length === 0) {
+        return;
+      }
+      for (const path of newPaths) {
+        extraFetchInFlightRef.current.add(path);
+      }
+      let payload: FullContextResponse;
+      try {
+        const params = new URLSearchParams({ repo });
+        if (base != null && base !== '') {
+          params.set('base', base);
+        }
+        const response = await fetch(`/api/contents?${params}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: newPaths.map((path) => ({ path })) }),
+        });
+        if (!response.ok) {
+          throw new Error((await response.text()).trim());
+        }
+        payload = (await response.json()) as FullContextResponse;
+      } catch (error) {
+        console.warn('Failed to load contents for commented files', error);
+        return;
+      } finally {
+        for (const path of newPaths) {
+          extraFetchInFlightRef.current.delete(path);
+        }
+      }
+      if (requestIdRef.current !== requestId) {
+        return;
+      }
+
+      const newItems: CodeViewItem<CommentMetadata>[] = [];
+      const newFileEntries: [string, CodeViewCommentSidebarFile][] = [];
+      for (const file of payload.files) {
+        extraFileContentsByPathRef.current.set(file.path, file.newContents);
+        if (file.newContents == null) {
+          continue;
+        }
+        const id = `file:${file.path}`;
+        const item: CodeViewItem<CommentMetadata> = {
+          id,
+          type: 'file',
+          file: {
+            name: file.path,
+            contents: file.newContents,
+            // Tokenization caches by key alone, so the key must change with
+            // the text for reloads to re-render fresh contents.
+            cacheKey: `${id}#${await sha1Hex(file.newContents)}`,
+          },
+          version: 0,
+        };
+        loadedItemsByIdRef.current.set(id, item);
+        newFileEntries.push([
+          id,
+          { fileOrder: loadedItemsByIdRef.current.size, path: file.path },
+        ]);
+        newItems.push(item);
+      }
+      if (newItems.length > 0) {
+        const viewer = viewerRef.current;
+        if (viewer != null) {
+          viewer.addItems(newItems);
+        } else {
+          setInitialItems((prev) => [...prev, ...newItems]);
+        }
+        setCommentFileByItemId(
+          (prev) => new Map([...(prev ?? []), ...newFileEntries])
+        );
+      }
+      const state = reviewStateRef.current;
+      if (state != null) {
+        applyServerState(state);
+      }
     }
   );
 
@@ -542,6 +701,8 @@ export function usePatchLoader({
     loadedItemsByIdRef.current = new Map();
     fileHashesByPathRef.current = new Map();
     patchTextByPathRef.current = new Map();
+    extraFileContentsByPathRef.current = new Map();
+    extraFetchInFlightRef.current = new Set();
     reviewStateRef.current = null;
     lastAppliedViewedByItemIdRef.current = new Map();
     lastAppliedAnnotationsByItemIdRef.current = new Map();

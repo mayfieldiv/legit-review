@@ -31,6 +31,14 @@ beforeAll(async () => {
   execFileSync('git', ['config', 'user.email', 't@t'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'T'], { cwd: repo });
   await writeFile(path.join(repo, 'a.txt'), 'one\n');
+  // Committed and never modified: the target for out-of-diff comments.
+  await writeFile(path.join(repo, 'calm.txt'), 'calm one\ncalm two\n');
+  // Committed with enough lines that a tail-only edit leaves the head
+  // outside every hunk (3 context lines around the change).
+  await writeFile(
+    path.join(repo, 'big.txt'),
+    Array.from({ length: 12 }, (_, i) => `b${i + 1}`).join('\n') + '\n'
+  );
   execFileSync('git', ['add', '-A'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'init'], { cwd: repo });
 });
@@ -167,9 +175,7 @@ describe('review state API', () => {
     expect(response.status).toBe(201);
     const body = (await response.json()) as {
       comment: { hunkHash: string; lineSnippet: string };
-      warning?: string;
     };
-    expect(body.warning).toBeUndefined();
     expect(body.comment.lineSnippet).toBe('two');
 
     // The server-computed hash must equal what the browser computes from the
@@ -199,9 +205,7 @@ describe('review state API', () => {
     expect(response.status).toBe(201);
     const body = (await response.json()) as {
       comment: { hunkHash: string; lineSnippet: string };
-      warning?: string;
     };
-    expect(body.warning).toBeUndefined();
     expect(body.comment.lineSnippet).toBe('alpha');
 
     const patch = await synthesizeUntrackedPatch(repo, 'new.txt');
@@ -209,8 +213,66 @@ describe('review state API', () => {
     expect(body.comment.hunkHash).toBe(fileHashes[0]?.hunkHashes[0]);
   });
 
-  test('warns when an agent comment misses every hunk', async () => {
-    const response = await postCommentRoute(
+  test('anchors out-of-hunk and unchanged-file comments to file contents', async () => {
+    // Tail-only edit: line 1 stays outside the hunk (3 context lines).
+    await writeFile(
+      path.join(repo, 'big.txt'),
+      Array.from({ length: 12 }, (_, i) =>
+        i === 11 ? 'b12 edited' : `b${i + 1}`
+      ).join('\n') + '\n'
+    );
+    const outOfHunk = await postCommentRoute(
+      jsonRequest(apiUrl('/api/comments'), 'POST', {
+        filePath: 'big.txt',
+        side: 'additions',
+        range: { start: 1, end: 1 },
+        message: 'Out-of-hunk finding',
+        author: 'reviewer',
+      })
+    );
+    expect(outOfHunk.status).toBe(201);
+    const outOfHunkBody = (await outOfHunk.json()) as {
+      comment: { hunkHash: string; lineSnippet: string };
+    };
+    expect(outOfHunkBody.comment.hunkHash).toBe('');
+    expect(outOfHunkBody.comment.lineSnippet).toBe('b1');
+
+    // A file with no diff at all hosts comments too.
+    const unchanged = await postCommentRoute(
+      jsonRequest(apiUrl('/api/comments'), 'POST', {
+        filePath: 'calm.txt',
+        side: 'additions',
+        range: { start: 2, end: 2 },
+        message: 'Unchanged-file finding',
+        author: 'reviewer',
+      })
+    );
+    expect(unchanged.status).toBe(201);
+    const unchangedBody = (await unchanged.json()) as {
+      comment: { hunkHash: string; lineSnippet: string };
+    };
+    expect(unchangedBody.comment.hunkHash).toBe('');
+    expect(unchangedBody.comment.lineSnippet).toBe('calm two');
+
+    // Deletions-side numbers resolve against the merge-base blob.
+    const oldSide = await postCommentRoute(
+      jsonRequest(apiUrl('/api/comments'), 'POST', {
+        filePath: 'calm.txt',
+        side: 'deletions',
+        range: { start: 1, end: 1 },
+        message: 'Old-side finding',
+        author: 'reviewer',
+      })
+    );
+    expect(oldSide.status).toBe(201);
+    const oldSideBody = (await oldSide.json()) as {
+      comment: { lineSnippet: string };
+    };
+    expect(oldSideBody.comment.lineSnippet).toBe('calm one');
+  });
+
+  test('rejects comments on lines that exist nowhere', async () => {
+    const beyondEof = await postCommentRoute(
       jsonRequest(apiUrl('/api/comments'), 'POST', {
         filePath: 'a.txt',
         side: 'additions',
@@ -219,13 +281,44 @@ describe('review state API', () => {
         author: 'reviewer',
       })
     );
-    expect(response.status).toBe(201);
-    const body = (await response.json()) as {
-      comment: { hunkHash: string };
-      warning?: string;
-    };
-    expect(body.comment.hunkHash).toBe('');
-    expect(body.warning).toContain('outdated tracking');
+    expect(beyondEof.status).toBe(422);
+    expect(await beyondEof.text()).toContain('out of range');
+
+    const missingFile = await postCommentRoute(
+      jsonRequest(apiUrl('/api/comments'), 'POST', {
+        filePath: 'no-such-file.txt',
+        side: 'additions',
+        range: { start: 1, end: 1 },
+        message: 'Bad file',
+        author: 'reviewer',
+      })
+    );
+    expect(missingFile.status).toBe(422);
+    expect(await missingFile.text()).toContain('not readable');
+
+    // Untracked files have no merge-base blob, so deletions-side numbers
+    // cannot resolve.
+    const untrackedOldSide = await postCommentRoute(
+      jsonRequest(apiUrl('/api/comments'), 'POST', {
+        filePath: 'new.txt',
+        side: 'deletions',
+        range: { start: 1, end: 1 },
+        message: 'Bad side',
+        author: 'reviewer',
+      })
+    );
+    expect(untrackedOldSide.status).toBe(422);
+
+    const invertedRange = await postCommentRoute(
+      jsonRequest(apiUrl('/api/comments'), 'POST', {
+        filePath: 'a.txt',
+        side: 'additions',
+        range: { start: 2, end: 1 },
+        message: 'Bad range',
+        author: 'reviewer',
+      })
+    );
+    expect(invertedRange.status).toBe(400);
   });
 
   test('viewed marks for hunks and files', async () => {

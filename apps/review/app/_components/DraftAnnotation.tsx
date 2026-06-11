@@ -1,14 +1,13 @@
-import type { DiffLineAnnotation } from '@pierre/diffs';
 import { IconArrowRight } from '@pierre/icons';
 import { useEffect, useRef, useState } from 'react';
 
 import { annotationCardBase, CommentAuthorBadge } from './annotation-shared';
-import type { DraftCommentMetadata } from './types';
+import type { CommentAnnotation, DraftCommentMetadata } from './types';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 interface DraftAnnotationProps {
-  annotation: DiffLineAnnotation<DraftCommentMetadata>;
+  annotation: CommentAnnotation<DraftCommentMetadata>;
   itemId: string;
   onCancel(itemId: string, key: string): void;
   // Persists the comment; resolves false when saving failed (the draft stays

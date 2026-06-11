@@ -1,6 +1,5 @@
 import {
   areSelectionsEqual,
-  type CodeViewDiffItem,
   type CodeViewItem,
   type CodeViewLineSelection,
   type CodeViewOptions,
@@ -30,13 +29,15 @@ import { SavedAnnotation } from './SavedAnnotation';
 import type {
   CodeViewDeletedCommentEvent,
   CodeViewSavedCommentEvent,
+  CommentAnnotation,
   CommentMetadata,
+  DraftCommentMetadata,
   PersistCommentInput,
   SavedCommentMetadata,
 } from './types';
 import {
   classifyCommentLineType,
-  isDiffItem,
+  getFileContentsLine,
   isDraftAnnotation,
   isDraftMetadata,
   isSavedAnnotation,
@@ -48,18 +49,32 @@ function getNextItemVersion(item: CodeViewItem<CommentMetadata>): number {
   return typeof item.version === 'number' ? item.version + 1 : 1;
 }
 
-function updateViewerDiffItem(
+// Rewrites an item's annotation list and pushes the bumped version to the
+// viewer; returning null from the callback leaves the item untouched. The
+// callbacks only filter elements or remap their metadata, so each item kind
+// keeps its own annotation element type (diff annotations carry a side,
+// plain-file annotations don't) — TS can't see that through the union,
+// hence the per-branch assertions.
+function updateViewerItemAnnotations(
   viewer: CodeViewHandle<CommentMetadata>,
   itemId: string,
-  updateItem: (item: CodeViewDiffItem<CommentMetadata>) => boolean
-): CodeViewDiffItem<CommentMetadata> | undefined {
+  update: (
+    annotations: readonly CommentAnnotation[]
+  ) => CommentAnnotation[] | null
+): CodeViewItem<CommentMetadata> | undefined {
   const item = viewer.getItem(itemId);
-  if (item == null || !isDiffItem(item)) {
+  if (item == null) {
     return undefined;
   }
 
-  if (!updateItem(item)) {
+  const next = update(item.annotations ?? []);
+  if (next == null) {
     return undefined;
+  }
+  if (item.type === 'diff') {
+    item.annotations = next as DiffLineAnnotation<CommentMetadata>[];
+  } else {
+    item.annotations = next as LineAnnotation<CommentMetadata>[];
   }
 
   item.version = getNextItemVersion(item);
@@ -170,57 +185,65 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
 
   const handleCreateDraftComment = useStableCallback(
     (range: SelectedLineRange, itemId: string) => {
-      const side = range.endSide ?? range.side;
-      if (side == null) {
-        return;
-      }
-
       const lineNumber = range.end;
       const commentKey = `draft-${nextCommentKeyRef.current++}`;
       const { current: viewer } = viewerRef;
       if (viewer == null) {
         return;
       }
+      const item = viewer.getItem(itemId);
+      if (item == null) {
+        return;
+      }
 
-      const draftAnnotation: DiffLineAnnotation<CommentMetadata> = {
-        side,
-        lineNumber,
-        metadata: {
-          kind: 'draft',
-          key: commentKey,
-          message: '',
-          range,
-        },
+      const draftMetadata: DraftCommentMetadata = {
+        kind: 'draft',
+        key: commentKey,
+        message: '',
+        range,
       };
 
       const { current: activeDraft } = activeDraftRef;
       if (activeDraft != null && activeDraft.itemId !== itemId) {
-        updateViewerDiffItem(viewer, activeDraft.itemId, (item) => {
-          if (item.annotations == null) {
-            return false;
+        updateViewerItemAnnotations(
+          viewer,
+          activeDraft.itemId,
+          (annotations) => {
+            const nextAnnotations = annotations.filter(
+              (annotation) => annotation.metadata.key !== activeDraft.key
+            );
+            return nextAnnotations.length === annotations.length
+              ? null
+              : nextAnnotations;
           }
-
-          const nextAnnotations = item.annotations.filter(
-            (annotation) => annotation.metadata.key !== activeDraft.key
-          );
-          if (nextAnnotations.length === item.annotations.length) {
-            return false;
-          }
-
-          item.annotations = nextAnnotations;
-          return true;
-        });
+        );
       }
 
-      const updatedItem = updateViewerDiffItem(viewer, itemId, (item) => {
+      // Diff annotations need the selection's side; plain file items have a
+      // single pane, so their annotations carry only the line number.
+      if (item.type === 'diff') {
+        const side = range.endSide ?? range.side;
+        if (side == null) {
+          return;
+        }
         const nonDraftAnnotations = (item.annotations ?? []).filter(
           (annotation) => !isDraftMetadata(annotation.metadata)
         );
-        item.annotations = [...nonDraftAnnotations, draftAnnotation];
-        return true;
-      });
-
-      if (updatedItem != null) {
+        item.annotations = [
+          ...nonDraftAnnotations,
+          { side, lineNumber, metadata: draftMetadata },
+        ];
+      } else {
+        const nonDraftAnnotations = (item.annotations ?? []).filter(
+          (annotation) => !isDraftMetadata(annotation.metadata)
+        );
+        item.annotations = [
+          ...nonDraftAnnotations,
+          { lineNumber, metadata: draftMetadata },
+        ];
+      }
+      item.version = getNextItemVersion(item);
+      if (viewer.updateItem(item)) {
         activeDraftRef.current = { itemId, key: commentKey };
       }
     }
@@ -233,28 +256,18 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
         return;
       }
       const item = viewer.getItem(itemId);
-      const removedAnnotation =
-        item != null && isDiffItem(item)
-          ? item.annotations?.find(
-              (annotation) => annotation.metadata.key === key
-            )
-          : undefined;
-
-      updateViewerDiffItem(viewer, itemId, (item) => {
-        if (item.annotations == null) {
-          return false;
-        }
-
-        const nextAnnotations = item.annotations.filter(
-          (annotation) => annotation.metadata.key !== key
+      const removedAnnotation: CommentAnnotation | undefined =
+        item?.annotations?.find(
+          (annotation) => annotation.metadata.key === key
         );
 
-        if (nextAnnotations.length === item.annotations.length) {
-          return false;
-        }
-
-        item.annotations = nextAnnotations;
-        return true;
+      updateViewerItemAnnotations(viewer, itemId, (annotations) => {
+        const nextAnnotations = annotations.filter(
+          (annotation) => annotation.metadata.key !== key
+        );
+        return nextAnnotations.length === annotations.length
+          ? null
+          : nextAnnotations;
       });
 
       const { current: activeDraft } = activeDraftRef;
@@ -279,45 +292,51 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
       }
 
       const item = viewer.getItem(itemId);
-      if (item == null || !isDiffItem(item)) {
+      if (item == null) {
         return false;
       }
 
-      const draftAnnotation = item?.annotations?.find(
-        (annotation) => annotation.metadata.key === key
-      );
+      const draftAnnotation: CommentAnnotation | undefined =
+        item.annotations?.find((annotation) => annotation.metadata.key === key);
       if (draftAnnotation == null || !isDraftAnnotation(draftAnnotation)) {
         return false;
       }
 
+      // Plain file items have no diff sides; their comments anchor to
+      // working-tree line numbers, which the store models as 'additions'.
+      const side =
+        'side' in draftAnnotation ? draftAnnotation.side : 'additions';
+
       // Persist first; only swap the draft card for a saved card once the
       // store accepted the comment, so a failed save never loses the text.
       const savedMetadata = await persistComment({
-        fileDiff: item.fileDiff,
+        fileDiff: item.type === 'diff' ? item.fileDiff : undefined,
         itemId,
+        lineSnippet:
+          item.type === 'file'
+            ? getFileContentsLine(
+                item.file.contents,
+                draftAnnotation.lineNumber
+              )
+            : undefined,
         message: trimmedMessage,
         range: draftAnnotation.metadata.range,
-        side: draftAnnotation.side,
+        side,
       });
       if (savedMetadata == null) {
         return false;
       }
 
-      const updatedItem = updateViewerDiffItem(viewer, itemId, (item) => {
-        if (item.annotations == null) {
-          return false;
-        }
-
-        const nextAnnotations: DiffLineAnnotation<CommentMetadata>[] =
-          item.annotations.map((annotation) =>
+      const updatedItem = updateViewerItemAnnotations(
+        viewer,
+        itemId,
+        (annotations) =>
+          annotations.map((annotation) =>
             annotation.metadata.key === key && isDraftAnnotation(annotation)
               ? { ...annotation, metadata: savedMetadata }
               : annotation
-          );
-
-        item.annotations = nextAnnotations;
-        return true;
-      });
+          )
+      );
 
       if (updatedItem == null) {
         return false;
@@ -335,16 +354,19 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
         itemId,
         key: savedMetadata.key,
         lineNumber: draftAnnotation.lineNumber,
-        lineType: classifyCommentLineType(
-          item.fileDiff,
-          draftAnnotation.side,
-          draftAnnotation.lineNumber
-        ),
+        lineType:
+          item.type === 'diff'
+            ? classifyCommentLineType(
+                item.fileDiff,
+                side,
+                draftAnnotation.lineNumber
+              )
+            : 'context',
         message: trimmedMessage,
         outdated: savedMetadata.outdated,
         range: draftAnnotation.metadata.range,
         resolved: savedMetadata.resolved,
-        side: draftAnnotation.side,
+        side,
       });
       return true;
     }
@@ -384,11 +406,10 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
         | LineAnnotation<CommentMetadata>,
       item: CodeViewItem<CommentMetadata>
     ) => {
-      if (!('side' in annotation) || item.type !== 'diff') {
-        return null;
-      }
-
       if (annotation.metadata.kind === 'hunk-viewed') {
+        if (item.type !== 'diff') {
+          return null;
+        }
         const { hunkHash, viewed } = annotation.metadata;
         return (
           <HunkViewedPill
@@ -427,15 +448,13 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
 
   const renderHeaderPrefix = useStableCallback(
     (item: CodeViewItem<CommentMetadata>) => {
-      if (item.type !== 'diff') {
-        return null;
-      }
-
       return (
         <CollapseDiffButton
           disabled={
-            item.fileDiff.splitLineCount === 0 &&
-            item.fileDiff.unifiedLineCount === 0
+            item.type === 'diff'
+              ? item.fileDiff.splitLineCount === 0 &&
+                item.fileDiff.unifiedLineCount === 0
+              : item.file.contents.length === 0
           }
           collapsed={item.collapsed}
           onToggle={() => handleToggleItemCollapsed(item.id)}
@@ -486,9 +505,6 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
         unsafeCSS: CODE_VIEW_CUSTOM_CSS,
         // FIXME(amadeus): Move all `onX` methods onto the react component maybe?
         onGutterUtilityClick(range, context) {
-          if (context.item.type !== 'diff') {
-            return;
-          }
           handleCreateDraftComment(range, context.item.id);
         },
         onLineSelectionEnd(range, context) {

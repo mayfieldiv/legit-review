@@ -22,6 +22,10 @@ then `main`/`master`, then `HEAD` (working-tree-only review).
 
 - **Inline comments** — click the `+` gutter button on any line. Comments
   persist to disk and survive restarts.
+- **Comments beyond the diff** — comments aren't limited to changed lines:
+  unchanged lines and entirely unchanged files host them too. Files outside the
+  diff that have comments render as plain full-file views with the comment cards
+  inline.
 - **Resolve workflow** — comments carry resolved/open state, a resolver name,
   and an optional resolution note. An agent resolves them over HTTP and the
   badge appears in the open browser within a second.
@@ -56,7 +60,7 @@ Loopback-only REST, keyed by `?repo=<absolute path>`:
 | ---------------------------------------------- | ------------------------------------------------------------------------------- |
 | `GET /api/state`                               | Full review state (comments + viewed marks)                                     |
 | `GET /api/comments?status=open\|resolved\|all` | List comments                                                                   |
-| `POST /api/comments`                           | Create a comment (omit `hunkHash` and the server anchors it to the diff)        |
+| `POST /api/comments`                           | Create a comment (omit `hunkHash` and the server anchors it; 422 on bad lines)  |
 | `PATCH /api/comments/:id`                      | Edit / resolve (`{"resolved":true,"resolvedBy":"claude","resolutionNote":"…"}`) |
 | `DELETE /api/comments/:id`                     | Delete                                                                          |
 | `PUT /api/viewed`                              | Set/clear viewed marks (hunk- and/or file-level, one call)                      |
@@ -65,16 +69,18 @@ Loopback-only REST, keyed by `?repo=<absolute path>`:
 | `POST /api/contents`                           | Full old/new contents for diffed files (context expansion)                      |
 
 When `POST /api/comments` is called without a `hunkHash` (the browser always
-sends one), the server locates the hunk covering `range.end` on `side` in the
-current diff and stores its content hash, so agent-posted comments get the
-same Outdated tracking as browser ones. The response carries a `warning` when
-the line isn't part of any hunk — the comment is saved, but the caller should
-re-check its line numbers against `GET /api/diff`.
+sends one), the server anchors the comment itself: a line inside a diff hunk
+gets the hunk's content hash (same Outdated tracking as browser comments), a
+line outside the diff is validated against the file's actual contents (working
+tree for `additions`, merge-base blob for `deletions`) and anchored by its line
+text. A line that exists in neither is rejected with `422` and an actionable
+message — the comment is NOT saved, so a caller with wrong line numbers can
+correct them against `GET /api/diff` and retry instead of a comment landing on
+the wrong code.
 
-A Claude Code skill for the agent workflows (resolving comments, posting
-review findings) lives at
-`~/.agents/mayfield-skills/global/local-review/SKILL.md` (not part of this
-repo).
+A Claude Code skill for the agent workflows (resolving comments, posting review
+findings) lives at `~/.agents/mayfield-skills/global/local-review/SKILL.md` (not
+part of this repo).
 
 ## Tests
 

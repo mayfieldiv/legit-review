@@ -1,14 +1,14 @@
-import type { CodeViewLineSelection, DiffLineAnnotation } from '@pierre/diffs';
+import type { CodeViewLineSelection } from '@pierre/diffs';
 import { IconCheck, IconClockArrow, IconX } from '@pierre/icons';
 import { memo } from 'react';
 
 import { annotationCardBase, CommentAuthorBadge } from './annotation-shared';
-import type { SavedCommentMetadata } from './types';
+import type { CommentAnnotation, SavedCommentMetadata } from './types';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 interface SavedAnnotationProps {
-  annotation: DiffLineAnnotation<SavedCommentMetadata>;
+  annotation: CommentAnnotation<SavedCommentMetadata>;
   itemId: string;
   onDelete(itemId: string, key: string): void;
   onToggleResolved(itemId: string, key: string, resolved: boolean): void;

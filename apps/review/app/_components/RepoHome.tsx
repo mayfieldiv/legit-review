@@ -22,7 +22,7 @@ export async function RepoHome() {
         <header className="border-border flex flex-wrap items-center justify-between gap-3 border-b pb-4">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-normal">
-              Pierre Review
+              Legit Review
             </h1>
             <p className="text-muted-foreground mt-1 text-sm">
               Local branch reviews with durable comment threads.

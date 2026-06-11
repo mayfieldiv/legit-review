@@ -1,4 +1,4 @@
-# Pierre Review
+# Legit Review
 
 Local, browser-based code review for the branch you're on. Point it at any
 repository on disk and review the working tree (including untracked files)

@@ -3,4 +3,4 @@
 // this is just the display name and tagline.
 export const SITE_DESCRIPTION =
   'Review your local branch in the browser: working-tree diffs, inline comments, and viewed-state that persists across restarts.';
-export const SITE_NAME = 'Pierre Review';
+export const SITE_NAME = 'Legit Review';

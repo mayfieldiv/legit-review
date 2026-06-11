@@ -8,7 +8,7 @@ const APPLE_ICON_SIZE = '640x640';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: `${SITE_NAME}, from Pierre`,
+    name: SITE_NAME,
     short_name: SITE_NAME,
     description: SITE_DESCRIPTION,
     id: '/',

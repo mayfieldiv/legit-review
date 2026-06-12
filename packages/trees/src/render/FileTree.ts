@@ -180,6 +180,7 @@ export class FileTree
   #id: string;
   readonly #onSelectionChange: FileTreeSelectionChangeListener | undefined;
   readonly #renderRowDecoration: FileTreeRowDecorationRenderer | undefined;
+  readonly #renderRowEndDecoration: FileTreeRowDecorationRenderer | undefined;
   readonly #renamingEnabled: boolean;
   readonly #searchBlurBehavior: FileTreeOptions['searchBlurBehavior'];
   readonly #searchEnabled: boolean;
@@ -221,6 +222,7 @@ export class FileTree
       onSelectionChange,
       overscan,
       renderRowDecoration,
+      renderRowEndDecoration,
       renaming,
       search,
       searchBlurBehavior,
@@ -237,6 +239,7 @@ export class FileTree
     this.#unsafeCSS = unsafeCSS;
     this.#onSelectionChange = onSelectionChange;
     this.#renderRowDecoration = renderRowDecoration;
+    this.#renderRowEndDecoration = renderRowEndDecoration;
     this.#renamingEnabled = renaming != null && renaming !== false;
     this.#searchBlurBehavior = searchBlurBehavior;
     this.#searchEnabled = search === true;
@@ -536,6 +539,7 @@ export class FileTree
       instanceId: this.#id,
       renamingEnabled: this.#renamingEnabled,
       renderRowDecoration: this.#renderRowDecoration,
+      renderRowEndDecoration: this.#renderRowEndDecoration,
       searchBlurBehavior: this.#searchBlurBehavior,
       searchEnabled: this.#searchEnabled,
       searchFakeFocus: this.#searchFakeFocus,
@@ -823,6 +827,7 @@ export function preloadFileTree(options: FileTreeOptions): FileTreeSsrPayload {
     onSelectionChange: _onSelectionChange,
     overscan,
     renderRowDecoration,
+    renderRowEndDecoration,
     renaming,
     search,
     searchBlurBehavior,
@@ -873,6 +878,7 @@ export function preloadFileTree(options: FileTreeOptions): FileTreeSsrPayload {
       overscan,
       renamingEnabled: renaming != null && renaming !== false,
       renderRowDecoration,
+      renderRowEndDecoration,
       searchBlurBehavior,
       searchEnabled: search === true,
       searchFakeFocus: searchFakeFocus === true,

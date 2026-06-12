@@ -24,6 +24,8 @@ import { ThemedFileTree } from './_theming/react/ThemedFileTree';
 import {
   BASE_FILE_TREE_OPTIONS,
   CODE_VIEW_FILE_TREE_ITEM_HEIGHT,
+  CODE_VIEW_THREAD_ICON_NAME,
+  CODE_VIEW_THREAD_ICON_VIEW_BOX,
   getInitialBatchSize,
 } from './constants';
 import type {
@@ -45,6 +47,7 @@ const PRESERVE_INPUT_ORDER_SORT: FileTreeSortComparator = () => 0;
 // because most Shiki themes don't define a "renamed" decoration color.
 const DENSITY_OVERRIDE_STYLES = {
   '--trees-density-override': 0.8,
+  '--trees-git-lane-width-override': '32px',
   '--trees-padding-inline-override': 8,
   '--trees-git-renamed-color-override': 'light-dark(#007aff, #007aff)',
 } as CSSProperties;
@@ -67,6 +70,10 @@ const FILE_DECORATION_CSS = `
   [data-file-tree-decoration-tone='threads'] {
     color: var(--trees-fg-muted);
     font-weight: var(--trees-font-weight-semibold);
+  }
+
+  [data-file-tree-decoration-tone='threads'] svg {
+    opacity: 0.85;
   }
 `;
 
@@ -125,26 +132,58 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
 
       const currentSource = sourceRef.current;
       const fileStats = currentSource.fileStatsByPath.get(item.path);
-      const itemId = currentSource.pathToItemId.get(item.path);
-      const unresolvedThreadCount =
-        itemId == null
-          ? 0
-          : (unresolvedThreadCountsByItemIdRef.current.get(itemId) ?? 0);
-      if (fileStats == null && unresolvedThreadCount === 0) {
+      if (fileStats == null) {
         return null;
       }
 
-      const parts = formatFileTreeDecorationParts(
-        fileStats,
-        unresolvedThreadCount
-      );
+      const parts = formatFileTreeDecorationParts(fileStats);
       if (parts.length === 0) {
         return null;
       }
 
       return {
         parts,
-        title: formatFileTreeDecorationTitle(fileStats, unresolvedThreadCount),
+        title: formatFileTreeDecorationTitle(fileStats),
+      };
+    }
+  );
+  const renderRowEndDecoration = useStableCallback(
+    ({
+      item,
+      row,
+    }: FileTreeRowDecorationContext): FileTreeRowDecoration | null => {
+      if (row.kind !== 'file') {
+        return null;
+      }
+
+      const itemId = sourceRef.current.pathToItemId.get(item.path);
+      const unresolvedThreadCount =
+        itemId == null
+          ? 0
+          : (unresolvedThreadCountsByItemIdRef.current.get(itemId) ?? 0);
+      if (unresolvedThreadCount <= 0) {
+        return null;
+      }
+
+      const title = `${unresolvedThreadCount} unresolved ${pluralize(
+        'thread',
+        unresolvedThreadCount
+      )}`;
+      return {
+        parts: [
+          {
+            icon: {
+              height: 12,
+              name: CODE_VIEW_THREAD_ICON_NAME,
+              viewBox: CODE_VIEW_THREAD_ICON_VIEW_BOX,
+              width: 14,
+            },
+            text: String(unresolvedThreadCount),
+            title,
+            tone: 'threads',
+          },
+        ],
+        title,
       };
     }
   );
@@ -160,6 +199,7 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
     sort: PRESERVE_INPUT_ORDER_SORT,
     onSelectionChange,
     renderRowDecoration,
+    renderRowEndDecoration,
     itemHeight: CODE_VIEW_FILE_TREE_ITEM_HEIGHT,
     initialVisibleRowCount,
     unsafeCSS: FILE_DECORATION_CSS,
@@ -242,8 +282,7 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
 });
 
 function formatFileTreeDecorationParts(
-  stats: CodeViewFileTreeFileStats | undefined,
-  unresolvedThreadCount: number
+  stats: CodeViewFileTreeFileStats | undefined
 ): FileTreeRowDecorationTextPart[] {
   const parts: FileTreeRowDecorationTextPart[] = [];
   if (stats != null && stats.addedLines > 0) {
@@ -263,22 +302,11 @@ function formatFileTreeDecorationParts(
       tone: 'deleted',
     });
   }
-  if (unresolvedThreadCount > 0) {
-    parts.push({
-      text: `#${unresolvedThreadCount}`,
-      title: `${unresolvedThreadCount} unresolved ${pluralize(
-        'thread',
-        unresolvedThreadCount
-      )}`,
-      tone: 'threads',
-    });
-  }
   return parts;
 }
 
 function formatFileTreeDecorationTitle(
-  stats: CodeViewFileTreeFileStats | undefined,
-  unresolvedThreadCount: number
+  stats: CodeViewFileTreeFileStats | undefined
 ): string {
   const parts: string[] = [];
   if (stats != null && stats.addedLines > 0) {
@@ -289,14 +317,6 @@ function formatFileTreeDecorationTitle(
   if (stats != null && stats.deletedLines > 0) {
     parts.push(
       `${stats.deletedLines} ${pluralize('deletion', stats.deletedLines)}`
-    );
-  }
-  if (unresolvedThreadCount > 0) {
-    parts.push(
-      `${unresolvedThreadCount} unresolved ${pluralize(
-        'thread',
-        unresolvedThreadCount
-      )}`
     );
   }
   return parts.join(', ');

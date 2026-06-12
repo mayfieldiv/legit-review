@@ -29,6 +29,8 @@ export const CODE_VIEW_CUSTOM_CSS = `
 export const CODE_VIEW_FILE_TREE_ITEM_HEIGHT = 24;
 export const CODE_VIEW_BATCH_COUNT = 25;
 export const CODE_VIEW_BATCH_COUNT_MAX = 96;
+export const CODE_VIEW_THREAD_ICON_NAME = 'review-file-tree-convo-fill';
+export const CODE_VIEW_THREAD_ICON_VIEW_BOX = '0 0 18 16';
 
 export function getInitialBatchSize(): number {
   const viewportHeight = getViewportHeight();
@@ -144,11 +146,25 @@ const FOLDER_LABEL_UNSAFE_CSS = `
   }
 `;
 
+const THREAD_ICON_SPRITE = `
+<svg data-review-file-tree-icons="" aria-hidden="true" width="0" height="0">
+  <symbol id="${CODE_VIEW_THREAD_ICON_NAME}" viewBox="${CODE_VIEW_THREAD_ICON_VIEW_BOX}">
+    <path d="M14.977 6.406a5 5 0 0 1 2.05 7.559l.754.755a.75.75 0 0 1-.53 1.28H13a4.98 4.98 0 0 1-3.477-1.41 8 8 0 0 0 5.453-8.184" opacity="0.4" fill="currentColor"></path>
+    <path d="M7 0c1.032 0 2.013.224 2.897.626a7.02 7.02 0 0 1 3.834 4.443A7 7 0 0 1 7 14H.75a.75.75 0 0 1-.531-1.28l1.33-1.33A7 7 0 0 1 7 0" fill="currentColor"></path>
+  </symbol>
+</svg>
+`;
+
 // Options shared across all mounts of this tree. Lives at module scope so the
 // reference stays stable and useFileTree() never churns its initial snapshot.
 export const BASE_FILE_TREE_OPTIONS = {
   flattenEmptyDirectories: true,
   id: 'gh-code-view-tree',
+  icons: {
+    colored: true,
+    set: 'complete',
+    spriteSheet: THREAD_ICON_SPRITE,
+  },
   initialExpansion: 'open',
   presorted: true,
   search: true,

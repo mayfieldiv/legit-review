@@ -1172,7 +1172,15 @@
 
   [data-file-tree-decoration-part] {
     flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--trees-decoration-icon-gap, 0.25em);
     min-width: 0;
+  }
+
+  [data-file-tree-decoration-part] > svg {
+    flex: 0 0 auto;
+    fill: currentColor;
   }
 
   [data-item-section='git'],

@@ -239,6 +239,7 @@ type FileTreeOptionSurface = FileTreeRenderOptions & {
   icons?: FileTreeIcons;
   onSelectionChange?: FileTreeSelectionChangeListener;
   renderRowDecoration?: FileTreeRowDecorationRenderer;
+  renderRowEndDecoration?: FileTreeRowDecorationRenderer;
   search?: boolean;
   // When `true`, renders the search input with a synthetic focus ring so the
   // input looks focused even though no browser focus is attached. The ring is
@@ -417,6 +418,7 @@ export interface FileTreeRowDecorationText {
 }
 
 export interface FileTreeRowDecorationTextPart {
+  icon?: RemappedIcon;
   text: string;
   title?: string;
   tone?: string;

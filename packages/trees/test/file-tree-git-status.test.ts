@@ -180,7 +180,7 @@ describe('file-tree git status', () => {
       expect(indexButton.getAttribute('data-item-git-status')).toBe('modified');
       expect(getGitLabel(indexButton)).toBe('M');
       expect(addedButton.getAttribute('data-item-git-status')).toBe('added');
-      expect(getGitLabel(addedButton)).toBe('A');
+      expect(getGitLabel(addedButton)).toBeNull();
       expect(ignoredButton.getAttribute('data-item-git-status')).toBe(
         'ignored'
       );
@@ -188,7 +188,7 @@ describe('file-tree git status', () => {
       expect(deletedButton.getAttribute('data-item-git-status')).toBe(
         'deleted'
       );
-      expect(getGitLabel(deletedButton)).toBe('D');
+      expect(getGitLabel(deletedButton)).toBeNull();
 
       expect(srcFolder.getAttribute('data-item-contains-git-change')).toBe(
         'true'
@@ -584,6 +584,89 @@ describe('file-tree git status', () => {
     }
   });
 
+  test('row end decorations render in the git lane instead of built-in status labels', async () => {
+    const { cleanup, dom } = installDom();
+    try {
+      const { FileTree } = await import('../src/render/FileTree');
+      const mount = dom.window.document.createElement('div');
+      dom.window.document.body.appendChild(mount);
+      const fileTree = new FileTree({
+        flattenEmptyDirectories: false,
+        gitStatus: [
+          { path: 'src/index.ts', status: 'modified' },
+          { path: 'src/components/Button.tsx', status: 'added' },
+          { path: 'test/index.test.ts', status: 'deleted' },
+        ],
+        icons: {
+          set: 'complete',
+          spriteSheet:
+            '<svg data-icon-sprite aria-hidden="true" width="0" height="0"><symbol id="test-thread-icon" viewBox="0 0 10 8"><path d="M1 1h8v5H4L2 8V6H1z" fill="currentColor" /></symbol></svg>',
+        },
+        initialExpansion: 'open',
+        paths: FILES,
+        renderRowEndDecoration: ({ item }) =>
+          item.path === 'src/components/Button.tsx'
+            ? {
+                parts: [
+                  {
+                    icon: {
+                      height: 8,
+                      name: 'test-thread-icon',
+                      viewBox: '0 0 10 8',
+                      width: 10,
+                    },
+                    text: '1',
+                    tone: 'threads',
+                  },
+                ],
+                title: '1 unresolved thread',
+              }
+            : null,
+        initialVisibleRowCount: 180 / 30,
+      });
+
+      fileTree.render({ containerWrapper: mount });
+      await flushDom();
+
+      const shadowRoot = fileTree.getFileTreeContainer()?.shadowRoot;
+      const indexButton = getItemButton(shadowRoot, dom, 'src/index.ts');
+      const addedButton = getItemButton(
+        shadowRoot,
+        dom,
+        'src/components/Button.tsx'
+      );
+      const deletedButton = getItemButton(
+        shadowRoot,
+        dom,
+        'test/index.test.ts'
+      );
+      const endDecoration = addedButton.querySelector(
+        '[data-item-section="git"] [data-file-tree-decoration-kind="parts"]'
+      );
+
+      expect(indexButton.getAttribute('data-item-git-status')).toBe('modified');
+      expect(getGitLabel(indexButton)).toBe('M');
+      expect(addedButton.getAttribute('data-item-git-status')).toBe('added');
+      expect(getGitLabel(addedButton)).toBe('1');
+      expect(endDecoration?.getAttribute('title')).toBe('1 unresolved thread');
+      const threadIcon = addedButton.querySelector(
+        '[data-item-section="git"] [data-icon-name="test-thread-icon"]'
+      );
+      expect(threadIcon).not.toBeNull();
+      expect(threadIcon?.querySelector('use')?.getAttribute('href')).toBe(
+        '#test-thread-icon'
+      );
+      expect(deletedButton.getAttribute('data-item-git-status')).toBe(
+        'deleted'
+      );
+      expect(getGitLabel(deletedButton)).toBeNull();
+
+      fileTree.cleanUp();
+    } finally {
+      cleanup();
+    }
+  });
+
   test('custom row decorations render structured text parts', async () => {
     const { cleanup, dom } = installDom();
     try {
@@ -601,7 +684,11 @@ describe('file-tree git status', () => {
                 parts: [
                   { text: '+12', tone: 'added' },
                   { text: '-3', tone: 'deleted' },
-                  { text: '#2', tone: 'threads' },
+                  {
+                    icon: { height: 6, name: 'file-tree-icon-dot', width: 6 },
+                    text: '2',
+                    tone: 'threads',
+                  },
                 ],
               }
             : null,
@@ -622,14 +709,13 @@ describe('file-tree git status', () => {
       expect(decoration?.getAttribute('title')).toBe(
         '12 additions, 3 deletions, 2 unresolved threads'
       );
-      expect(parts.map((part) => part.textContent)).toEqual([
-        '+12',
-        '-3',
-        '#2',
-      ]);
+      expect(parts.map((part) => part.textContent)).toEqual(['+12', '-3', '2']);
       expect(
         parts.map((part) => part.getAttribute('data-file-tree-decoration-tone'))
       ).toEqual(['added', 'deleted', 'threads']);
+      expect(
+        parts[2]?.querySelector('[data-icon-name="file-tree-icon-dot"]')
+      ).not.toBeNull();
 
       fileTree.cleanUp();
     } finally {

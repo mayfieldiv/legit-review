@@ -65,6 +65,7 @@ export interface FileTreeViewProps extends Omit<
   instanceId?: string;
   renamingEnabled?: boolean;
   renderRowDecoration?: FileTreeRowDecorationRenderer;
+  renderRowEndDecoration?: FileTreeRowDecorationRenderer;
   searchBlurBehavior?: FileTreeSearchBlurBehavior;
   searchEnabled?: boolean;
   searchFakeFocus?: boolean;

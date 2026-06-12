@@ -17,6 +17,7 @@ import {
   CONTEXT_MENU_TRIGGER_TYPE,
   HEADER_SLOT_NAME,
 } from '../constants';
+import type { RemappedIcon } from '../iconConfig';
 import {
   FILE_TREE_RENAME_VIEW,
   FileTreeController,
@@ -65,7 +66,10 @@ import {
   scrollFocusedRowToOffset,
   scrollFocusedRowToViewportOffset,
 } from './focusHelpers';
-import { createFileTreeIconResolver } from './iconResolver';
+import {
+  createFileTreeIconResolver,
+  type FileTreeResolvedIcon,
+} from './iconResolver';
 import { classifyFileTreeRenameHandoff } from './renameHandoff';
 import { RenameInput } from './RenameInput';
 import { computeFileTreeRowElementAttributes } from './rowAttributes';
@@ -774,6 +778,25 @@ function isBuiltInDecorationIconName(name: string): name is SVGSpriteNames {
   );
 }
 
+function resolveDecorationIcon(
+  decorationIcon: RemappedIcon,
+  resolveIcon: ReturnType<typeof createFileTreeIconResolver>['resolveIcon']
+): FileTreeResolvedIcon {
+  if (typeof decorationIcon === 'string') {
+    return isBuiltInDecorationIconName(decorationIcon)
+      ? resolveIcon(decorationIcon)
+      : { name: decorationIcon };
+  }
+
+  if (!isBuiltInDecorationIconName(decorationIcon.name)) {
+    return decorationIcon;
+  }
+
+  const resolvedIcon = resolveIcon(decorationIcon.name);
+  const { name: _ignoredName, ...iconOverrides } = decorationIcon;
+  return { ...resolvedIcon, ...iconOverrides };
+}
+
 function renderRowDecoration(
   decoration: FileTreeRowDecoration | null,
   resolveIcon: ReturnType<typeof createFileTreeIconResolver>['resolveIcon']
@@ -792,29 +815,24 @@ function renderRowDecoration(
         {decoration.parts.map((part, index) => (
           <span
             data-file-tree-decoration-part=""
+            data-file-tree-decoration-part-has-icon={
+              part.icon != null ? 'true' : undefined
+            }
             data-file-tree-decoration-tone={part.tone}
             key={index}
             title={part.title}
           >
-            {part.text}
+            {part.icon != null ? (
+              <Icon {...resolveDecorationIcon(part.icon, resolveIcon)} />
+            ) : null}
+            <span data-file-tree-decoration-part-text="">{part.text}</span>
           </span>
         ))}
       </span>
     );
   }
 
-  const icon =
-    typeof decoration.icon === 'string'
-      ? isBuiltInDecorationIconName(decoration.icon)
-        ? resolveIcon(decoration.icon)
-        : { name: decoration.icon }
-      : isBuiltInDecorationIconName(decoration.icon.name)
-        ? (() => {
-            const resolvedIcon = resolveIcon(decoration.icon.name);
-            const { name: _ignoredName, ...iconOverrides } = decoration.icon;
-            return { ...resolvedIcon, ...iconOverrides };
-          })()
-        : decoration.icon;
+  const icon = resolveDecorationIcon(decoration.icon, resolveIcon);
   return (
     <span title={decoration.title}>
       <Icon {...icon} />
@@ -971,6 +989,10 @@ type FileTreeRenderRowFrame = {
     row: FileTreeVisibleRow,
     targetPath: string
   ) => FileTreeRowDecoration | null;
+  renderEndDecorationForRow: (
+    row: FileTreeVisibleRow,
+    targetPath: string
+  ) => FileTreeRowDecoration | null;
   openContextMenuForRow: (
     row: FileTreeVisibleRow,
     targetPath: string,
@@ -1030,6 +1052,7 @@ function renderStyledRow(
     registerButton,
     resolveIcon,
     renderDecorationForRow,
+    renderEndDecorationForRow,
     openContextMenuForRow,
     onRowClick,
     onKeyDown,
@@ -1049,10 +1072,10 @@ function renderStyledRow(
     row.kind === 'directory' &&
     (directoriesWithGitChanges?.has(targetPath) ?? false);
   const customDecoration = renderDecorationForRow(row, targetPath);
-  const gitDecoration = getBuiltInGitStatusDecoration(
-    effectiveGitStatus,
-    containsGitChange
-  );
+  const endDecoration = renderEndDecorationForRow(row, targetPath);
+  const gitDecoration =
+    endDecoration ??
+    getBuiltInGitStatusDecoration(effectiveGitStatus, containsGitChange);
   const actionLaneEnabled =
     contextMenuEnabled && contextMenuButtonTriggerEnabled;
   const decorationLaneEnabled =
@@ -1239,6 +1262,7 @@ export function FileTreeView({
   overscan = FILE_TREE_DEFAULT_OVERSCAN,
   renamingEnabled = false,
   renderRowDecoration,
+  renderRowEndDecoration,
   searchBlurBehavior = 'close',
   searchEnabled = false,
   searchFakeFocus = false,
@@ -1496,7 +1520,8 @@ export function FileTreeView({
   const gitLaneActive =
     gitStatusByPath != null ||
     ignoredGitDirectories != null ||
-    directoriesWithGitChanges != null;
+    directoriesWithGitChanges != null ||
+    renderRowEndDecoration != null;
   const { resolveIcon } = useMemo(
     () => createFileTreeIconResolver(icons),
     [icons]
@@ -1561,6 +1586,17 @@ export function FileTreeView({
         row,
       }) ?? null,
     [renderRowDecoration]
+  );
+  const renderEndDecorationForRow = useCallback(
+    (
+      row: FileTreeVisibleRow,
+      targetPath: string
+    ): FileTreeRowDecoration | null =>
+      renderRowEndDecoration?.({
+        item: createContextMenuItem(row, targetPath),
+        row,
+      }) ?? null,
+    [renderRowEndDecoration]
   );
   const restoreContextMenuFocus = useCallback(
     (restorePath: string | null): boolean => {
@@ -3663,6 +3699,7 @@ export function FileTreeView({
     registerRenameInput,
     renameView,
     renderDecorationForRow,
+    renderEndDecorationForRow,
     resolveIcon,
     shouldSuppressContextMenu,
     visualFocusPath,

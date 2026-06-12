@@ -1130,6 +1130,13 @@
     /* white-space: nowrap; */
   }
 
+  [data-item-section='content']:has(
+    + [data-item-section='decoration']
+      > span[data-file-tree-decoration-kind='parts']
+  ) {
+    flex: 1 1 auto;
+  }
+
   [data-item-section='decoration'] {
     flex: 1 1 0;
     min-width: 0;
@@ -1149,6 +1156,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  [data-item-section='decoration']:has(
+    > span[data-file-tree-decoration-kind='parts']
+  ) {
+    flex: 0 0 auto;
+    min-width: max-content;
   }
 
   [data-item-section='decoration']

@@ -503,6 +503,13 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
     },
     [commentFileByItemId, getFileHunkHashes, putViewedMarks]
   );
+  const canToggleFileViewed = useCallback(
+    (itemId: string): boolean => {
+      const file = commentFileByItemId?.get(itemId);
+      return file == null ? false : getFileHunkHashes(file.path) != null;
+    },
+    [commentFileByItemId, getFileHunkHashes]
+  );
   const handleCommentDeleted = useCallback(
     (comment: CodeViewDeletedCommentEvent) => {
       // The viewer already removed the annotation optimistically.
@@ -540,19 +547,23 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
       // targets must not carry a diff side.
       const item = viewerRef.current?.getItem(comment.itemId);
       const isFileItem = item?.type === 'file';
+      const diffSide =
+        comment.range.endSide ?? comment.range.side ?? comment.side;
       viewerRef.current?.setSelectedLines({
         id: comment.itemId,
         range: isFileItem
           ? { start: comment.range.start, end: comment.range.end }
-          : comment.range,
+          : {
+              ...comment.range,
+              side: comment.range.side ?? diffSide,
+              endSide: comment.range.endSide ?? diffSide,
+            },
       });
       viewerRef.current?.scrollTo({
         type: 'line',
         id: comment.itemId,
         lineNumber: comment.range.end,
-        ...(isFileItem
-          ? {}
-          : { side: comment.range.endSide ?? comment.range.side }),
+        ...(isFileItem ? {} : { side: diffSide }),
         align: 'center',
         behavior: 'smooth-auto',
       });
@@ -625,6 +636,7 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
             viewerRef={viewerRef}
             initialItems={initialItems}
             getHunkViewedState={getHunkViewedState}
+            canToggleFileViewed={canToggleFileViewed}
             isFileViewed={isFileViewed}
             onCommentDeleted={handleCommentDeleted}
             onCommentSaved={handleCommentSaved}

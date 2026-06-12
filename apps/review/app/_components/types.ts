@@ -63,8 +63,8 @@ export interface HunkViewedState {
 
 export type CommentMetadata = SavedCommentMetadata | DraftCommentMetadata;
 
-// An annotation on either item kind: diff items carry a side, the plain
-// file items used for out-of-diff comments don't.
+// An annotation on either item kind: diff items carry a side, while legacy
+// plain file items don't.
 export type CommentAnnotation<M extends CommentMetadata = CommentMetadata> =
   | DiffLineAnnotation<M>
   | LineAnnotation<M>;
@@ -86,9 +86,9 @@ export type CommentLineType = 'change' | 'context';
 
 // Everything the viewer knows about a draft when it is submitted; the
 // container resolves the file path + hunk hash and POSTs to the store.
-// `fileDiff` is absent for drafts on plain file items (out-of-diff files
-// rendered because they host comments) — those have no hunks to anchor to,
-// so the container sends an empty hunk hash with the line's text instead.
+// `fileDiff` is absent for drafts on plain file items. Context-only diff
+// snippets for unchanged files still pass a full-context diff and include a
+// line snippet so they anchor with an empty hunk hash plus the line text.
 export interface PersistCommentInput {
   fileDiff?: FileDiffMetadata;
   itemId: string;

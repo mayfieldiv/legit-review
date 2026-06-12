@@ -2,6 +2,7 @@ import { processFile } from '@pierre/diffs';
 import { describe, expect, test } from 'bun:test';
 
 import {
+  buildCommentContextFileDiff,
   buildFullContextFileDiff,
   isFullContextCandidate,
 } from '../app/_components/fullContext';
@@ -113,3 +114,108 @@ describe('buildFullContextFileDiff', () => {
     expect(full).not.toBeNull();
   });
 });
+
+describe('buildCommentContextFileDiff', () => {
+  test('renders only the comment line and surrounding context by default', () => {
+    const fileDiff = buildCommentContextFileDiff({
+      path: 'calm.txt',
+      contents: `${makeLines(20).join('\n')}\n`,
+      cacheKey: 'calm-context',
+      ranges: [{ start: 10, end: 10 }],
+    });
+
+    expect(fileDiff).not.toBeNull();
+    expect(fileDiff!.isPartial).toBe(false);
+    expect(fileDiff!.additionLines).toHaveLength(20);
+    expect(fileDiff!.hunks).toHaveLength(1);
+    expect(fileDiff!.hunks[0]).toMatchObject({
+      collapsedBefore: 6,
+      additionStart: 7,
+      additionCount: 7,
+      deletionStart: 7,
+      deletionCount: 7,
+      splitLineStart: 6,
+      unifiedLineStart: 6,
+    });
+
+    expect(getVisibleContextLineNumbers(fileDiff!)).toEqual([
+      7, 8, 9, 10, 11, 12, 13,
+    ]);
+    expect(getTrailingContextLineCount(fileDiff!)).toBe(7);
+  });
+
+  test('keeps leading and trailing hidden lines expandable by renderer contract', () => {
+    const fileDiff = buildCommentContextFileDiff({
+      path: 'calm.txt',
+      contents: `${makeLines(20).join('\n')}\n`,
+      cacheKey: 'calm-context',
+      ranges: [{ start: 10, end: 10 }],
+    });
+    expect(fileDiff).not.toBeNull();
+
+    const hunk = fileDiff!.hunks[0];
+    expect(fileDiff!.isPartial).toBe(false);
+    expect(hunk?.collapsedBefore).toBe(6);
+    expect(getTrailingContextLineCount(fileDiff!)).toBe(7);
+    expect(fileDiff!.additionLines[4]?.trim()).toBe('line 5');
+    expect(fileDiff!.additionLines[15]?.trim()).toBe('line 16');
+  });
+
+  test('merges overlapping comment context windows', () => {
+    const fileDiff = buildCommentContextFileDiff({
+      path: 'calm.txt',
+      contents: `${makeLines(30).join('\n')}\n`,
+      cacheKey: 'calm-context',
+      ranges: [
+        { start: 10, end: 10 },
+        { start: 13, end: 13 },
+      ],
+    });
+
+    expect(fileDiff).not.toBeNull();
+    expect(fileDiff!.hunks).toHaveLength(1);
+    expect(fileDiff!.hunks[0]).toMatchObject({
+      additionStart: 7,
+      additionCount: 10,
+    });
+    expect(getVisibleContextLineNumbers(fileDiff!)).toEqual([
+      7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    ]);
+  });
+
+  test('returns null when no comment range points at an existing line', () => {
+    expect(
+      buildCommentContextFileDiff({
+        path: 'calm.txt',
+        contents: `${makeLines(5).join('\n')}\n`,
+        cacheKey: 'calm-context',
+        ranges: [{ start: 10, end: 10 }],
+      })
+    ).toBeNull();
+  });
+});
+
+function getVisibleContextLineNumbers(
+  fileDiff: NonNullable<ReturnType<typeof buildCommentContextFileDiff>>
+): number[] {
+  return fileDiff.hunks.flatMap((hunk) =>
+    Array.from(
+      { length: hunk.additionCount },
+      (_, index) => hunk.additionStart + index
+    )
+  );
+}
+
+function getTrailingContextLineCount(
+  fileDiff: NonNullable<ReturnType<typeof buildCommentContextFileDiff>>
+): number {
+  const lastHunk = fileDiff.hunks.at(-1);
+  if (lastHunk == null) {
+    return 0;
+  }
+  return Math.max(
+    fileDiff.additionLines.length -
+      (lastHunk.additionLineIndex + lastHunk.additionCount),
+    0
+  );
+}

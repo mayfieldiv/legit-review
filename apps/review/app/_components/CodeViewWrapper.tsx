@@ -40,6 +40,7 @@ import type {
 import {
   classifyCommentLineType,
   getFileContentsLine,
+  getFullFileDiffLine,
   isDraftAnnotation,
   isDraftMetadata,
   isSavedAnnotation,
@@ -95,6 +96,7 @@ interface CodeViewWrapperProps {
     itemId: string,
     hunkIndex: number
   ): HunkViewedState | undefined;
+  canToggleFileViewed(itemId: string): boolean;
   isFileViewed(itemId: string): boolean;
   onCommentDeleted(comment: CodeViewDeletedCommentEvent): void;
   onCommentSaved(comment: CodeViewSavedCommentEvent): void;
@@ -129,6 +131,7 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
   className,
   diffStyle,
   getHunkViewedState,
+  canToggleFileViewed,
   isFileViewed,
   onCommentDeleted,
   onCommentSaved,
@@ -336,7 +339,11 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
                 item.file.contents,
                 draftAnnotation.lineNumber
               )
-            : undefined,
+            : getFullFileDiffLine(
+                item.fileDiff,
+                side,
+                draftAnnotation.lineNumber
+              ),
         message: trimmedMessage,
         range: draftAnnotation.metadata.range,
         side,
@@ -499,7 +506,7 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
 
   const renderHeaderMetadata = useStableCallback(
     (item: CodeViewItem<CommentMetadata>) => {
-      if (item.type !== 'diff') {
+      if (item.type !== 'diff' || !canToggleFileViewed(item.id)) {
         return null;
       }
 

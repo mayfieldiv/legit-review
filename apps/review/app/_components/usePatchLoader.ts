@@ -29,6 +29,7 @@ import {
 } from './codeViewDataAccumulator';
 import { CODE_VIEW_BATCH_COUNT, getInitialBatchSize } from './constants';
 import {
+  buildCommentContextFileDiff,
   buildFullContextFileDiff,
   type FullContextResponse,
   isFullContextCandidate,
@@ -78,6 +79,7 @@ const STREAM_WORK_BUDGET_MS = 8;
 const STREAM_TREE_PUBLISH_FILE_BATCH_SIZE = 1_000;
 const STREAM_TREE_PUBLISH_INTERVAL_MS = 1_000;
 const GENERIC_PATCH_LOAD_ERROR_MESSAGE = 'We couldn’t load that diff.';
+const EXTRA_FILE_ITEM_ID_PREFIX = 'file:';
 
 interface UsePatchLoaderOptions {
   base?: string;
@@ -166,12 +168,18 @@ export function usePatchLoader({
   // Mirror of the latest server review state for synchronous reads from
   // render-time callbacks (e.g. the header Viewed checkbox).
   const reviewStateRef = useRef<ReviewStateResponse | null>(null);
-  // Working-tree contents for commented files that have no diff item, keyed
-  // by path. Such files render as plain (type 'file') items so out-of-diff
-  // comments still show with code context. null marks a path whose contents
-  // are unavailable (missing/binary/oversized) so it isn't refetched — its
-  // comments stay sidebar-only.
+  // Working-tree contents for commented files that have no real diff item,
+  // keyed by path. Such files render as synthetic context-only diff snippets
+  // so out-of-diff comments show nearby code without mounting the whole file.
+  // null marks a path whose contents are unavailable (missing/binary/oversized)
+  // so it isn't refetched; its comments stay sidebar-only.
   const extraFileContentsByPathRef = useRef<Map<string, string | null>>(
+    new Map()
+  );
+  // Signature of the comment ranges currently represented by each synthetic
+  // diff item for an unchanged file. When review state changes, this lets us
+  // rebuild only the snippets whose visible windows need to move.
+  const extraFileContextSignatureByPathRef = useRef<Map<string, string>>(
     new Map()
   );
   // Paths with an /api/contents request in flight, so a state refresh that
@@ -259,9 +267,9 @@ export function usePatchLoader({
   // collapse. Server state replaces all synthetic annotations while open
   // drafts are preserved, so this is idempotent and doubles as the refresh
   // path when an agent mutates comments or the diff is reloaded. Comments on
-  // files outside the diff mount those files as plain file items (contents
-  // fetched on demand); only files unreadable as text fall back to an
-  // orphan sidebar section with no annotation.
+  // files outside the diff mount compact context-only diff items (contents
+  // fetched on demand); only files unreadable as text fall back to an orphan
+  // sidebar section with no annotation.
   const applyServerState = useStableCallback(
     (state: ReviewStateResponse): void => {
       const comments: readonly ReviewStateComment[] = state.comments;
@@ -284,19 +292,28 @@ export function usePatchLoader({
         string,
         LineAnnotation<CommentMetadata>[]
       >();
-      // Commented files with no item yet: contents are fetched async and
-      // this whole projection re-runs once their file items exist.
+      // Commented files with no item yet: contents are fetched async and this
+      // whole projection re-runs once their context-only items exist.
       const pathsNeedingContents = new Set<string>();
       const sectionsByPath = new Map<string, CodeViewSavedCommentItem>();
       const sortedComments = [...comments].sort(
         (a, b) => a.range.end - b.range.end
       );
+      const extraCommentRangesByPath = new Map<
+        string,
+        ReviewStateComment['range'][]
+      >();
       for (const comment of sortedComments) {
         const item = itemsByPath.get(comment.filePath);
         const fileHashes = fileHashesByPathRef.current.get(comment.filePath);
         const extraContents = extraFileContentsByPathRef.current.get(
           comment.filePath
         );
+        if (fileHashes == null && extraContents != null) {
+          const ranges = extraCommentRangesByPath.get(comment.filePath) ?? [];
+          ranges.push(comment.range);
+          extraCommentRangesByPath.set(comment.filePath, ranges);
+        }
         if (item == null && extraContents === undefined) {
           pathsNeedingContents.add(comment.filePath);
         }
@@ -381,6 +398,9 @@ export function usePatchLoader({
 
       const viewer = viewerRef.current;
       for (const item of loadedItemsByIdRef.current.values()) {
+        const extraContextChanged = isExtraFileContextItem(item)
+          ? updateExtraFileContextItem(item, extraCommentRangesByPath)
+          : false;
         if (item.type === 'file') {
           // Plain file items carry only saved-comment annotations: no viewed
           // pills (nothing was changed) and no viewed-driven collapse.
@@ -445,6 +465,7 @@ export function usePatchLoader({
           serverAnnotations,
         ]);
         if (
+          !extraContextChanged &&
           !collapseChanged &&
           lastAppliedAnnotationsByItemIdRef.current.get(item.id) ===
             annotationSignature
@@ -473,7 +494,7 @@ export function usePatchLoader({
   );
 
   // Fetches working-tree contents for commented files outside the diff and
-  // mounts them as plain file items so their comments render with code
+  // mounts compact context-only diff items so their comments render with code
   // context, then re-projects review state to attach the annotations.
   // Unreadable paths are cached as null so their comments stay sidebar-only
   // without refetching; transport failures stay uncached and retry on the
@@ -526,17 +547,28 @@ export function usePatchLoader({
         if (file.newContents == null) {
           continue;
         }
-        const id = `file:${file.path}`;
+        const id = getExtraFileItemId(file.path);
+        const contentHash = await sha1Hex(file.newContents);
+        const ranges = reviewStateRef.current?.comments
+          .filter((comment) => comment.filePath === file.path)
+          .map((comment) => comment.range);
+        const fileDiff = buildCommentContextFileDiff({
+          path: file.path,
+          contents: file.newContents,
+          cacheKey: `${id}#${contentHash}`,
+          ranges: ranges ?? [],
+        });
+        if (fileDiff == null) {
+          continue;
+        }
+        extraFileContextSignatureByPathRef.current.set(
+          file.path,
+          getCommentRangeSignature(ranges ?? [])
+        );
         const item: CodeViewItem<CommentMetadata> = {
           id,
-          type: 'file',
-          file: {
-            name: file.path,
-            contents: file.newContents,
-            // Tokenization caches by key alone, so the key must change with
-            // the text for reloads to re-render fresh contents.
-            cacheKey: `${id}#${await sha1Hex(file.newContents)}`,
-          },
+          type: 'diff',
+          fileDiff,
           version: 0,
         };
         loadedItemsByIdRef.current.set(id, item);
@@ -563,6 +595,45 @@ export function usePatchLoader({
       }
     }
   );
+
+  function isExtraFileContextItem(
+    item: CodeViewItem<CommentMetadata>
+  ): item is CodeViewItem<CommentMetadata> & { type: 'diff' } {
+    return (
+      item.type === 'diff' &&
+      item.id === getExtraFileItemId(item.fileDiff.name) &&
+      extraFileContentsByPathRef.current.has(item.fileDiff.name) &&
+      !fileHashesByPathRef.current.has(item.fileDiff.name)
+    );
+  }
+
+  function updateExtraFileContextItem(
+    item: CodeViewItem<CommentMetadata> & { type: 'diff' },
+    rangesByPath: ReadonlyMap<string, readonly ReviewStateComment['range'][]>
+  ): boolean {
+    const path = item.fileDiff.name;
+    const contents = extraFileContentsByPathRef.current.get(path);
+    if (contents == null) {
+      return false;
+    }
+    const ranges = rangesByPath.get(path) ?? [];
+    const signature = getCommentRangeSignature(ranges);
+    if (extraFileContextSignatureByPathRef.current.get(path) === signature) {
+      return false;
+    }
+    const nextFileDiff = buildCommentContextFileDiff({
+      path,
+      contents,
+      cacheKey: item.fileDiff.cacheKey ?? getExtraFileItemId(path),
+      ranges,
+    });
+    if (nextFileDiff == null) {
+      return false;
+    }
+    extraFileContextSignatureByPathRef.current.set(path, signature);
+    item.fileDiff = nextFileDiff;
+    return true;
+  }
 
   // Whether an item's file currently counts as viewed (file-level mark or
   // all hunks marked). Read at render time by the header Viewed checkbox.
@@ -714,6 +785,7 @@ export function usePatchLoader({
     fileHashesByPathRef.current = new Map();
     patchTextByPathRef.current = new Map();
     extraFileContentsByPathRef.current = new Map();
+    extraFileContextSignatureByPathRef.current = new Map();
     extraFetchInFlightRef.current = new Set();
     reviewStateRef.current = null;
     lastAppliedViewedByItemIdRef.current = new Map();
@@ -1239,6 +1311,34 @@ function replaceLocationHash(hash: string | null): void {
     '',
     `${pathname}${search}${nextHash}`
   );
+}
+
+function getExtraFileItemId(path: string): string {
+  return `${EXTRA_FILE_ITEM_ID_PREFIX}${path}`;
+}
+
+function getCommentRangeSignature(
+  ranges: readonly ReviewStateComment['range'][]
+): string {
+  const entries = ranges
+    .map((range) => [
+      range.start,
+      range.side ?? '',
+      range.end,
+      range.endSide ?? '',
+    ])
+    .sort((left, right) => {
+      for (let index = 0; index < left.length; index++) {
+        const comparison = String(left[index]).localeCompare(
+          String(right[index])
+        );
+        if (comparison !== 0) {
+          return comparison;
+        }
+      }
+      return 0;
+    });
+  return JSON.stringify(entries);
 }
 
 function yieldToBrowser(): Promise<void> {

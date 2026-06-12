@@ -66,6 +66,25 @@ export function getFileContentsLine(
     : undefined;
 }
 
+// Reads a 1-based line from a full-context diff side. Partial patch diffs do
+// not carry complete file contents, so callers only use this as an optional
+// snippet source for comments that anchor outside real changed hunks.
+export function getFullFileDiffLine(
+  fileDiff: FileDiffMetadata,
+  side: AnnotationSide,
+  lineNumber: number
+): string | undefined {
+  if (fileDiff.isPartial) {
+    return undefined;
+  }
+  const lines =
+    side === 'additions' ? fileDiff.additionLines : fileDiff.deletionLines;
+  if (lineNumber < 1 || lineNumber > lines.length) {
+    return undefined;
+  }
+  return stripLineEnding(lines[lineNumber - 1] ?? '');
+}
+
 // A file counts as viewed when its file-level mark matches the current file
 // hash, or when every hunk in the current diff is individually marked viewed.
 export function computeFileViewed(
@@ -169,6 +188,13 @@ function insertCommentInLineOrder(
 
   nextComments.splice(insertIndex, 0, entry);
   return nextComments;
+}
+
+function stripLineEnding(line: string): string {
+  if (line.endsWith('\r\n')) {
+    return line.slice(0, -2);
+  }
+  return line.endsWith('\n') || line.endsWith('\r') ? line.slice(0, -1) : line;
 }
 
 export function upsertSavedCommentSidebarEntry(

@@ -1,6 +1,7 @@
 import {
   type ChangeTypes,
   type FileDiffMetadata,
+  type Hunk,
   processFile,
 } from '@pierre/diffs';
 
@@ -18,6 +19,8 @@ const EXPANDABLE_CHANGE_TYPES: ReadonlySet<ChangeTypes> = new Set([
   'change',
   'rename-changed',
 ]);
+const DEFAULT_COMMENT_CONTEXT_LINES = 3;
+const SPLIT_WITH_NEWLINES = /(?<=\n)/;
 
 export function isFullContextCandidate(fileDiff: FileDiffMetadata): boolean {
   return (
@@ -51,6 +54,19 @@ export interface BuildFullContextFileDiffInput {
   newContents: string;
 }
 
+export interface CommentContextRange {
+  start: number;
+  end: number;
+}
+
+export interface BuildCommentContextFileDiffInput {
+  path: string;
+  contents: string;
+  cacheKey: string;
+  ranges: readonly CommentContextRange[];
+  contextLines?: number;
+}
+
 // Re-parses a file's patch text with full old/new contents attached, turning
 // the partial diff into an expandable one. Returns null when the contents do
 // not line up with the patch — the working tree (or merge base) changed
@@ -73,6 +89,87 @@ export function buildFullContextFileDiff({
     return null;
   }
   return areHunkLinesAligned(partial, full) ? full : null;
+}
+
+// Builds a diff-shaped view for comments on files that have no actual diff.
+// The hunks contain only unchanged context lines around the comment ranges;
+// hidden file regions stay expandable through the normal diff controls.
+export function buildCommentContextFileDiff({
+  path,
+  contents,
+  cacheKey,
+  ranges,
+  contextLines = DEFAULT_COMMENT_CONTEXT_LINES,
+}: BuildCommentContextFileDiffInput): FileDiffMetadata | null {
+  const lines = splitFileContents(contents);
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const windows = buildCommentContextWindows({
+    contextLines,
+    lineCount: lines.length,
+    ranges,
+  });
+  if (windows.length === 0) {
+    return null;
+  }
+
+  const hunks: Hunk[] = [];
+  let splitLineCount = 0;
+  let unifiedLineCount = 0;
+  let lastHunkEnd = 0;
+  for (const window of windows) {
+    const lineCount = window.end - window.start + 1;
+    const collapsedBefore = Math.max(window.start - 1 - lastHunkEnd, 0);
+    const lineIndex = window.start - 1;
+    const hunk: Hunk = {
+      collapsedBefore,
+      additionStart: window.start,
+      additionCount: lineCount,
+      additionLines: 0,
+      additionLineIndex: lineIndex,
+      deletionStart: window.start,
+      deletionCount: lineCount,
+      deletionLines: 0,
+      deletionLineIndex: lineIndex,
+      hunkContent: [
+        {
+          type: 'context',
+          lines: lineCount,
+          additionLineIndex: lineIndex,
+          deletionLineIndex: lineIndex,
+        },
+      ],
+      hunkSpecs: `@@ -${window.start},${lineCount} +${window.start},${lineCount} @@`,
+      splitLineStart: splitLineCount + collapsedBefore,
+      splitLineCount: lineCount,
+      unifiedLineStart: unifiedLineCount + collapsedBefore,
+      unifiedLineCount: lineCount,
+      noEOFCRDeletions: false,
+      noEOFCRAdditions: false,
+    };
+    hunks.push(hunk);
+    splitLineCount += collapsedBefore + lineCount;
+    unifiedLineCount += collapsedBefore + lineCount;
+    lastHunkEnd = window.end;
+  }
+
+  const trailingContext = Math.max(lines.length - lastHunkEnd, 0);
+  splitLineCount += trailingContext;
+  unifiedLineCount += trailingContext;
+
+  return {
+    name: path,
+    type: 'change',
+    hunks,
+    splitLineCount,
+    unifiedLineCount,
+    isPartial: false,
+    deletionLines: lines,
+    additionLines: lines,
+    cacheKey,
+  };
 }
 
 // The full-contents parse trusts hunk headers to slice into the file lines;
@@ -126,6 +223,74 @@ function areLineSlicesEqual(
     }
   }
   return true;
+}
+
+function buildCommentContextWindows({
+  contextLines,
+  lineCount,
+  ranges,
+}: {
+  contextLines: number;
+  lineCount: number;
+  ranges: readonly CommentContextRange[];
+}): CommentContextRange[] {
+  const padding = Math.max(0, contextLines);
+  const windows = ranges
+    .flatMap((range) => {
+      const start = toValidLineNumber(
+        Math.min(range.start, range.end),
+        lineCount
+      );
+      const end = toValidLineNumber(
+        Math.max(range.start, range.end),
+        lineCount
+      );
+      if (start == null || end == null) {
+        return [];
+      }
+      return [
+        {
+          start: Math.max(start - padding, 1),
+          end: Math.min(end + padding, lineCount),
+        },
+      ];
+    })
+    .sort((left, right) => {
+      const startComparison = left.start - right.start;
+      if (startComparison !== 0) {
+        return startComparison;
+      }
+      return left.end - right.end;
+    });
+
+  const merged: CommentContextRange[] = [];
+  for (const window of windows) {
+    const previous = merged.at(-1);
+    if (previous == null || window.start > previous.end + 1) {
+      merged.push({ ...window });
+    } else if (window.end > previous.end) {
+      previous.end = window.end;
+    }
+  }
+  return merged;
+}
+
+function toValidLineNumber(
+  lineNumber: number,
+  lineCount: number
+): number | null {
+  if (
+    !Number.isSafeInteger(lineNumber) ||
+    lineNumber < 1 ||
+    lineNumber > lineCount
+  ) {
+    return null;
+  }
+  return lineNumber;
+}
+
+function splitFileContents(contents: string): string[] {
+  return contents !== '' ? contents.split(SPLIT_WITH_NEWLINES) : [];
 }
 
 // Parsed patch lines and split file contents both keep their trailing

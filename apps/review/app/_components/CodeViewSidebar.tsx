@@ -15,6 +15,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useMemo,
   useState,
 } from 'react';
 
@@ -72,6 +73,18 @@ export const CodeViewSidebar = memo(function CodeViewSidebar({
   for (const section of commentSections) {
     totalCommentCount += section.comments.length;
   }
+  const unresolvedThreadCountsByItemId = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const section of commentSections) {
+      for (const comment of section.comments) {
+        if (comment.resolved) {
+          continue;
+        }
+        counts.set(comment.itemId, (counts.get(comment.itemId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [commentSections]);
   // Pull the resolved Shiki theme so the whole sidebar (tabs row, file
   // tree, diff stats panel, footer) sits on the theme's sidebar surface
   // and its chrome text follows the theme's own foreground tokens
@@ -214,6 +227,7 @@ export const CodeViewSidebar = memo(function CodeViewSidebar({
               source={source}
               onModelReady={handleModelReady}
               onSelectItem={onSelectItem}
+              unresolvedThreadCountsByItemId={unresolvedThreadCountsByItemId}
             />
           </div>
           <div

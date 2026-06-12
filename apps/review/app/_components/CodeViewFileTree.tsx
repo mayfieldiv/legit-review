@@ -5,9 +5,18 @@ import type {
   FileTreeBatchOperation,
   FileTree as FileTreeModel,
   FileTreeOptions,
+  FileTreeRowDecoration,
+  FileTreeRowDecorationContext,
 } from '@pierre/trees';
 import { useFileTree } from '@pierre/trees/react';
-import { type CSSProperties, memo, useEffect, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import type { FileTreePublicId } from '../../../../packages/trees/dist/model/publicTypes';
 import { ThemedFileTree } from './_theming/react/ThemedFileTree';
@@ -16,7 +25,10 @@ import {
   CODE_VIEW_FILE_TREE_ITEM_HEIGHT,
   getInitialBatchSize,
 } from './constants';
-import type { CodeViewFileTreeSource } from './types';
+import type {
+  CodeViewFileTreeFileStats,
+  CodeViewFileTreeSource,
+} from './types';
 type FileTreeSortComparator = Exclude<
   NonNullable<FileTreeOptions['sort']>,
   'default'
@@ -36,6 +48,12 @@ const DENSITY_OVERRIDE_STYLES = {
   '--trees-git-renamed-color-override': 'light-dark(#007aff, #007aff)',
 } as CSSProperties;
 
+const FILE_DECORATION_CSS = `
+  [data-item-section='decoration'] > span {
+    font-variant-numeric: tabular-nums;
+  }
+`;
+
 interface CodeViewFileTreeProps {
   // Callback invoked with the underlying tree model once it's mounted, and
   // again with `null` on unmount. Lets parents drive imperative APIs like
@@ -43,17 +61,23 @@ interface CodeViewFileTreeProps {
   onModelReady(model: FileTreeModel | null): void;
   onSelectItem(itemId: string): void;
   source: CodeViewFileTreeSource;
+  unresolvedThreadCountsByItemId: ReadonlyMap<string, number>;
 }
 
 export const CodeViewFileTree = memo(function CodeViewFileTree({
   onModelReady,
   onSelectItem,
   source,
+  unresolvedThreadCountsByItemId,
 }: CodeViewFileTreeProps) {
   const sourceRef = useRef(source);
+  const unresolvedThreadCountsByItemIdRef = useRef(
+    unresolvedThreadCountsByItemId
+  );
   const previousSourceRef = useRef(source);
   const [initialVisibleRowCount] = useState(getInitialBatchSize);
   sourceRef.current = source;
+  unresolvedThreadCountsByItemIdRef.current = unresolvedThreadCountsByItemId;
   // `source.paths` aliases the streaming accumulator's live array, so it keeps
   // growing on later publishes. The FileTree model consumes its path list
   // exactly once via useFileTree's useState initializer; capture a bounded
@@ -74,6 +98,36 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
       }
     }
   );
+  const renderRowDecoration = useStableCallback(
+    ({
+      item,
+      row,
+    }: FileTreeRowDecorationContext): FileTreeRowDecoration | null => {
+      if (row.kind !== 'file') {
+        return null;
+      }
+
+      const currentSource = sourceRef.current;
+      const fileStats = currentSource.fileStatsByPath.get(item.path);
+      const itemId = currentSource.pathToItemId.get(item.path);
+      const unresolvedThreadCount =
+        itemId == null
+          ? 0
+          : (unresolvedThreadCountsByItemIdRef.current.get(itemId) ?? 0);
+      if (fileStats == null && unresolvedThreadCount === 0) {
+        return null;
+      }
+
+      return {
+        text: formatFileTreeDecorationText(fileStats, unresolvedThreadCount),
+        title: formatFileTreeDecorationTitle(fileStats, unresolvedThreadCount),
+      };
+    }
+  );
+  const unresolvedThreadCountsSignature = useMemo(
+    () => formatUnresolvedThreadCountsSignature(unresolvedThreadCountsByItemId),
+    [unresolvedThreadCountsByItemId]
+  );
 
   const { model } = useFileTree({
     ...BASE_FILE_TREE_OPTIONS,
@@ -81,8 +135,10 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
     paths: initialPathsRef.current,
     sort: PRESERVE_INPUT_ORDER_SORT,
     onSelectionChange,
+    renderRowDecoration,
     itemHeight: CODE_VIEW_FILE_TREE_ITEM_HEIGHT,
     initialVisibleRowCount,
+    unsafeCSS: FILE_DECORATION_CSS,
   });
 
   useEffect(() => {
@@ -121,6 +177,15 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
       if (source.gitStatusPatch != null) {
         model.applyGitStatusPatch(source.gitStatusPatch);
       }
+      // A repeated tree path can publish new line stats without adding a row
+      // or changing git status; refresh so the decoration lane catches up.
+      if (
+        source.pathCount === previousPathCount &&
+        source.gitStatusPatch == null &&
+        model.getFileTreeContainer() != null
+      ) {
+        model.render({});
+      }
     } else {
       model.resetPaths(source.paths.slice(0, source.pathCount));
       model.setGitStatus(source.gitStatus);
@@ -132,6 +197,16 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
     return () => onModelReady(null);
   }, [model, onModelReady]);
 
+  // useFileTree keeps one model instance and ignores later option changes, so
+  // the decoration callback reads refs and thread-count changes explicitly
+  // refresh the mounted tree.
+  useEffect(() => {
+    if (model.getFileTreeContainer() == null) {
+      return;
+    }
+    model.render({});
+  }, [model, unresolvedThreadCountsSignature]);
+
   return (
     <ThemedFileTree
       className="h-full min-h-0 overflow-auto overscroll-contain md:ml-3"
@@ -141,3 +216,57 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
     />
   );
 });
+
+function formatFileTreeDecorationText(
+  stats: CodeViewFileTreeFileStats | undefined,
+  unresolvedThreadCount: number
+): string {
+  const parts: string[] = [];
+  if (stats != null) {
+    parts.push(`+${stats.addedLines}`, `-${stats.deletedLines}`);
+  }
+  if (unresolvedThreadCount > 0) {
+    parts.push(`#${unresolvedThreadCount}`);
+  }
+  return parts.join(' ');
+}
+
+function formatFileTreeDecorationTitle(
+  stats: CodeViewFileTreeFileStats | undefined,
+  unresolvedThreadCount: number
+): string {
+  const parts: string[] = [];
+  if (stats != null) {
+    parts.push(
+      `${stats.addedLines} ${pluralize('addition', stats.addedLines)}`,
+      `${stats.deletedLines} ${pluralize('deletion', stats.deletedLines)}`
+    );
+  }
+  if (unresolvedThreadCount > 0) {
+    parts.push(
+      `${unresolvedThreadCount} unresolved ${pluralize(
+        'thread',
+        unresolvedThreadCount
+      )}`
+    );
+  }
+  return parts.join(', ');
+}
+
+function pluralize(word: string, count: number): string {
+  return count === 1 ? word : `${word}s`;
+}
+
+function formatUnresolvedThreadCountsSignature(
+  counts: ReadonlyMap<string, number>
+): string {
+  if (counts.size === 0) {
+    return '';
+  }
+
+  return [...counts]
+    .filter(([, count]) => count > 0)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([itemId, count]) => `${itemId}:${count}`)
+    .join('\n');
+}

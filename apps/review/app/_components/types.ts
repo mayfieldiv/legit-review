@@ -164,6 +164,11 @@ export interface CodeViewSavedCommentItem {
   path: string;
 }
 
+export interface CodeViewFileTreeFileStats {
+  addedLines: number;
+  deletedLines: number;
+}
+
 // The fully pre-computed input this tree needs for a given fetch. It is built
 // once at fetch time by snapshotCodeViewTreeSource and stored alongside the
 // viewer items, so later per-item annotation updates do not feed into the
@@ -183,6 +188,7 @@ export interface CodeViewSavedCommentItem {
 // read-only side; pathCount is what keeps later in-place growth invisible to
 // this snapshot.
 export interface CodeViewFileTreeSource {
+  fileStatsByPath: ReadonlyMap<string, CodeViewFileTreeFileStats>;
   gitStatus: readonly GitStatusEntry[];
   gitStatusPatch?: FileTreeGitStatusPatch;
   pathCount: number;

@@ -11,6 +11,7 @@ import type {
   CodeViewCommentFileByItemId,
   CodeViewCommentSidebarFile,
   CodeViewDiffStats,
+  CodeViewFileTreeFileStats,
   CodeViewFileTreeSource,
   CommentMetadata,
 } from './types';
@@ -19,6 +20,7 @@ import { mapChangeTypeToGitStatus } from './utils';
 export interface CodeViewDataAccumulator {
   diffStats: CodeViewDiffStats;
   fileIndex: number;
+  fileStatsByPath: Map<string, CodeViewFileTreeFileStats>;
   gitStatusByPath: Map<string, GitStatusEntry>;
   itemIdToFile: Map<string, CodeViewCommentSidebarFile>;
   items: CodeViewItem<CommentMetadata>[];
@@ -64,6 +66,7 @@ export function createCodeViewDataAccumulator(): CodeViewDataAccumulator {
       totalLinesOfCode: 0,
     },
     fileIndex: 0,
+    fileStatsByPath: new Map(),
     gitStatusByPath: new Map(),
     itemIdToFile: new Map(),
     items: [],
@@ -87,10 +90,16 @@ export function appendFileDiffToCodeViewData(
   const { diffStats } = accumulator;
   diffStats.fileCount++;
   diffStats.totalLinesOfCode += fileDiff.unifiedLineCount;
+  const fileStats: CodeViewFileTreeFileStats = {
+    addedLines: 0,
+    deletedLines: 0,
+  };
   for (const hunk of fileDiff.hunks) {
-    diffStats.addedLines += hunk.additionLines;
-    diffStats.deletedLines += hunk.deletionLines;
+    fileStats.addedLines += hunk.additionLines;
+    fileStats.deletedLines += hunk.deletionLines;
   }
+  diffStats.addedLines += fileStats.addedLines;
+  diffStats.deletedLines += fileStats.deletedLines;
 
   const path = fileDiff.name;
   const treePath = treePathPrefix == null ? path : `${treePathPrefix}/${path}`;
@@ -128,6 +137,7 @@ export function appendFileDiffToCodeViewData(
   if (previousPathState == null) {
     accumulator.paths.push(treePath);
   }
+  accumulator.fileStatsByPath.set(treePath, fileStats);
   accumulator.pathToItemId.set(treePath, id);
   updateGitStatusByPath(
     accumulator,
@@ -167,6 +177,7 @@ export function snapshotCodeViewTreeSource(
   const previousSource = accumulator.lastTreeSource;
   const gitStatusPatch = takePendingGitStatusPatch(accumulator);
   const snapshot: CodeViewFileTreeSource = {
+    fileStatsByPath: accumulator.fileStatsByPath,
     gitStatus: Array.from(accumulator.gitStatusByPath.values()),
     gitStatusPatch: previousSource == null ? undefined : gitStatusPatch,
     pathCount: accumulator.paths.length,

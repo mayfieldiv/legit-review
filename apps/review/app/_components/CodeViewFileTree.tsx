@@ -7,6 +7,7 @@ import type {
   FileTreeOptions,
   FileTreeRowDecoration,
   FileTreeRowDecorationContext,
+  FileTreeRowDecorationTextPart,
 } from '@pierre/trees';
 import { useFileTree } from '@pierre/trees/react';
 import {
@@ -51,6 +52,21 @@ const DENSITY_OVERRIDE_STYLES = {
 const FILE_DECORATION_CSS = `
   [data-item-section='decoration'] > span {
     font-variant-numeric: tabular-nums;
+  }
+
+  [data-file-tree-decoration-tone='added'] {
+    color: var(--trees-git-added-color);
+    font-weight: var(--trees-font-weight-semibold);
+  }
+
+  [data-file-tree-decoration-tone='deleted'] {
+    color: var(--trees-git-deleted-color);
+    font-weight: var(--trees-font-weight-semibold);
+  }
+
+  [data-file-tree-decoration-tone='threads'] {
+    color: var(--trees-fg-muted);
+    font-weight: var(--trees-font-weight-semibold);
   }
 `;
 
@@ -118,8 +134,16 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
         return null;
       }
 
+      const parts = formatFileTreeDecorationParts(
+        fileStats,
+        unresolvedThreadCount
+      );
+      if (parts.length === 0) {
+        return null;
+      }
+
       return {
-        text: formatFileTreeDecorationText(fileStats, unresolvedThreadCount),
+        parts,
         title: formatFileTreeDecorationTitle(fileStats, unresolvedThreadCount),
       };
     }
@@ -217,18 +241,39 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
   );
 });
 
-function formatFileTreeDecorationText(
+function formatFileTreeDecorationParts(
   stats: CodeViewFileTreeFileStats | undefined,
   unresolvedThreadCount: number
-): string {
-  const parts: string[] = [];
-  if (stats != null) {
-    parts.push(`+${stats.addedLines}`, `-${stats.deletedLines}`);
+): FileTreeRowDecorationTextPart[] {
+  const parts: FileTreeRowDecorationTextPart[] = [];
+  if (stats != null && stats.addedLines > 0) {
+    parts.push({
+      text: `+${stats.addedLines}`,
+      title: `${stats.addedLines} ${pluralize('addition', stats.addedLines)}`,
+      tone: 'added',
+    });
+  }
+  if (stats != null && stats.deletedLines > 0) {
+    parts.push({
+      text: `-${stats.deletedLines}`,
+      title: `${stats.deletedLines} ${pluralize(
+        'deletion',
+        stats.deletedLines
+      )}`,
+      tone: 'deleted',
+    });
   }
   if (unresolvedThreadCount > 0) {
-    parts.push(`#${unresolvedThreadCount}`);
+    parts.push({
+      text: `#${unresolvedThreadCount}`,
+      title: `${unresolvedThreadCount} unresolved ${pluralize(
+        'thread',
+        unresolvedThreadCount
+      )}`,
+      tone: 'threads',
+    });
   }
-  return parts.join(' ');
+  return parts;
 }
 
 function formatFileTreeDecorationTitle(
@@ -236,9 +281,13 @@ function formatFileTreeDecorationTitle(
   unresolvedThreadCount: number
 ): string {
   const parts: string[] = [];
-  if (stats != null) {
+  if (stats != null && stats.addedLines > 0) {
     parts.push(
-      `${stats.addedLines} ${pluralize('addition', stats.addedLines)}`,
+      `${stats.addedLines} ${pluralize('addition', stats.addedLines)}`
+    );
+  }
+  if (stats != null && stats.deletedLines > 0) {
+    parts.push(
       `${stats.deletedLines} ${pluralize('deletion', stats.deletedLines)}`
     );
   }

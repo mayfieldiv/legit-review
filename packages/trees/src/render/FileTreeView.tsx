@@ -786,6 +786,23 @@ function renderRowDecoration(
     return <span title={decoration.title}>{decoration.text}</span>;
   }
 
+  if ('parts' in decoration) {
+    return (
+      <span data-file-tree-decoration-kind="parts" title={decoration.title}>
+        {decoration.parts.map((part, index) => (
+          <span
+            data-file-tree-decoration-part=""
+            data-file-tree-decoration-tone={part.tone}
+            key={index}
+            title={part.title}
+          >
+            {part.text}
+          </span>
+        ))}
+      </span>
+    );
+  }
+
   const icon =
     typeof decoration.icon === 'string'
       ? isBuiltInDecorationIconName(decoration.icon)

@@ -1151,6 +1151,16 @@
     white-space: nowrap;
   }
 
+  [data-item-section='decoration']
+    > span[data-file-tree-decoration-kind='parts'] {
+    gap: var(--trees-decoration-part-gap, 0.5em);
+  }
+
+  [data-file-tree-decoration-part] {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
   [data-item-section='git'],
   [data-item-section='action'] {
     flex: 0 0 auto;

@@ -416,6 +416,17 @@ export interface FileTreeRowDecorationText {
   title?: string;
 }
 
+export interface FileTreeRowDecorationTextPart {
+  text: string;
+  title?: string;
+  tone?: string;
+}
+
+export interface FileTreeRowDecorationParts {
+  parts: readonly FileTreeRowDecorationTextPart[];
+  title?: string;
+}
+
 export interface FileTreeRowDecorationIcon {
   icon: RemappedIcon;
   title?: string;
@@ -423,6 +434,7 @@ export interface FileTreeRowDecorationIcon {
 
 export type FileTreeRowDecoration =
   | FileTreeRowDecorationText
+  | FileTreeRowDecorationParts
   | FileTreeRowDecorationIcon;
 
 export interface FileTreeRowDecorationContext {

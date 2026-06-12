@@ -584,6 +584,59 @@ describe('file-tree git status', () => {
     }
   });
 
+  test('custom row decorations render structured text parts', async () => {
+    const { cleanup, dom } = installDom();
+    try {
+      const { FileTree } = await import('../src/render/FileTree');
+      const mount = dom.window.document.createElement('div');
+      dom.window.document.body.appendChild(mount);
+      const fileTree = new FileTree({
+        flattenEmptyDirectories: false,
+        initialExpansion: 'open',
+        paths: FILES,
+        renderRowDecoration: ({ item }) =>
+          item.path === 'src/index.ts'
+            ? {
+                title: '12 additions, 3 deletions, 2 unresolved threads',
+                parts: [
+                  { text: '+12', tone: 'added' },
+                  { text: '-3', tone: 'deleted' },
+                  { text: '#2', tone: 'threads' },
+                ],
+              }
+            : null,
+        initialVisibleRowCount: 180 / 30,
+      });
+
+      fileTree.render({ containerWrapper: mount });
+      await flushDom();
+
+      const shadowRoot = fileTree.getFileTreeContainer()?.shadowRoot;
+      const indexButton = getItemButton(shadowRoot, dom, 'src/index.ts');
+      const decoration = indexButton.querySelector(
+        '[data-file-tree-decoration-kind="parts"]'
+      );
+      const parts = Array.from(
+        decoration?.querySelectorAll('[data-file-tree-decoration-part]') ?? []
+      );
+      expect(decoration?.getAttribute('title')).toBe(
+        '12 additions, 3 deletions, 2 unresolved threads'
+      );
+      expect(parts.map((part) => part.textContent)).toEqual([
+        '+12',
+        '-3',
+        '#2',
+      ]);
+      expect(
+        parts.map((part) => part.getAttribute('data-file-tree-decoration-tone'))
+      ).toEqual(['added', 'deleted', 'threads']);
+
+      fileTree.cleanUp();
+    } finally {
+      cleanup();
+    }
+  });
+
   test('preload and hydrate preserve git-status attrs without duplicating the SSR wrapper', async () => {
     const { cleanup, dom } = installDom();
     try {

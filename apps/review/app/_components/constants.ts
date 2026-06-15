@@ -129,10 +129,12 @@ const SIDEBAR_VIRTUALIZED_SCROLL_UNSAFE_CSS = `
   }
 `;
 
-// In this view everything is assumed to be changing, so the folder dot that
-// signals "contains a git change" is superfluous and is hidden globally.
+// In this view the folder gutter carries review-specific aggregate stats, so
+// the generic "contains git changes" dot is redundant when it appears.
 const SUPPRESS_FOLDER_DOT_UNSAFE_CSS = `
-  [data-item-contains-git-change='true'] > [data-item-section='git'] {
+  [data-item-contains-git-change='true']
+    > [data-item-section='git']
+    [data-icon-name='file-tree-icon-dot'] {
     display: none;
   }
 `;

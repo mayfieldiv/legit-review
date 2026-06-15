@@ -47,7 +47,7 @@ const PRESERVE_INPUT_ORDER_SORT: FileTreeSortComparator = () => 0;
 // because most Shiki themes don't define a "renamed" decoration color.
 const DENSITY_OVERRIDE_STYLES = {
   '--trees-density-override': 0.8,
-  '--trees-git-lane-width-override': '32px',
+  '--trees-git-lane-width-override': '0px',
   '--trees-padding-inline-override': 8,
   '--trees-git-renamed-color-override': 'light-dark(#007aff, #007aff)',
 } as CSSProperties;
@@ -62,9 +62,23 @@ const FILE_DECORATION_CSS = `
     font-weight: var(--trees-font-weight-semibold);
   }
 
+  [data-file-tree-decoration-tone='added-directory'] {
+    color: var(--trees-git-added-color);
+    font-style: italic;
+    font-weight: var(--trees-font-weight-semibold);
+    opacity: 0.72;
+  }
+
   [data-file-tree-decoration-tone='deleted'] {
     color: var(--trees-git-deleted-color);
     font-weight: var(--trees-font-weight-semibold);
+  }
+
+  [data-file-tree-decoration-tone='deleted-directory'] {
+    color: var(--trees-git-deleted-color);
+    font-style: italic;
+    font-weight: var(--trees-font-weight-semibold);
+    opacity: 0.72;
   }
 
   [data-file-tree-decoration-tone='threads'] {
@@ -72,8 +86,38 @@ const FILE_DECORATION_CSS = `
     font-weight: var(--trees-font-weight-semibold);
   }
 
+  [data-file-tree-decoration-tone='threads-directory'] {
+    color: var(--trees-fg-muted);
+    font-style: italic;
+    font-weight: var(--trees-font-weight-semibold);
+    opacity: 0.72;
+  }
+
   [data-file-tree-decoration-tone='threads'] svg {
     opacity: 0.85;
+  }
+
+  [data-file-tree-decoration-tone='threads-directory'] svg {
+    opacity: 0.85;
+  }
+
+  [data-item-section='git'] {
+    margin-inline-start: 0;
+    overflow: hidden;
+    width: 0;
+  }
+
+  [data-item-section='git']:has([data-file-tree-decoration-tone='threads']),
+  [data-item-section='git']:has([data-file-tree-decoration-tone='threads-directory']) {
+    margin-inline-start: 4px;
+    min-width: 24px;
+    overflow: visible;
+    width: auto;
+  }
+
+  [data-item-section='git']:has([data-file-tree-decoration-tone='threads']) > span,
+  [data-item-section='git']:has([data-file-tree-decoration-tone='threads-directory']) > span {
+    width: auto;
   }
 `;
 
@@ -96,6 +140,9 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
   const sourceRef = useRef(source);
   const unresolvedThreadCountsByItemIdRef = useRef(
     unresolvedThreadCountsByItemId
+  );
+  const directoryThreadCountsByPathRef = useRef<ReadonlyMap<string, number>>(
+    new Map()
   );
   const previousSourceRef = useRef(source);
   const [initialVisibleRowCount] = useState(getInitialBatchSize);
@@ -126,24 +173,23 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
       item,
       row,
     }: FileTreeRowDecorationContext): FileTreeRowDecoration | null => {
-      if (row.kind !== 'file') {
-        return null;
-      }
-
       const currentSource = sourceRef.current;
-      const fileStats = currentSource.fileStatsByPath.get(item.path);
-      if (fileStats == null) {
+      const stats =
+        row.kind === 'file'
+          ? currentSource.fileStatsByPath.get(item.path)
+          : currentSource.directoryStatsByPath.get(item.path);
+      if (stats == null) {
         return null;
       }
 
-      const parts = formatFileTreeDecorationParts(fileStats);
+      const parts = formatFileTreeDecorationParts(stats, row.kind);
       if (parts.length === 0) {
         return null;
       }
 
       return {
         parts,
-        title: formatFileTreeDecorationTitle(fileStats),
+        title: formatFileTreeDecorationTitle(stats, row.kind),
       };
     }
   );
@@ -152,15 +198,14 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
       item,
       row,
     }: FileTreeRowDecorationContext): FileTreeRowDecoration | null => {
-      if (row.kind !== 'file') {
-        return null;
-      }
-
-      const itemId = sourceRef.current.pathToItemId.get(item.path);
       const unresolvedThreadCount =
-        itemId == null
-          ? 0
-          : (unresolvedThreadCountsByItemIdRef.current.get(itemId) ?? 0);
+        row.kind === 'file'
+          ? getFileThreadCount(
+              sourceRef.current,
+              unresolvedThreadCountsByItemIdRef.current,
+              item.path
+            )
+          : (directoryThreadCountsByPathRef.current.get(item.path) ?? 0);
       if (unresolvedThreadCount <= 0) {
         return null;
       }
@@ -180,7 +225,7 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
             },
             text: String(unresolvedThreadCount),
             title,
-            tone: 'threads',
+            tone: row.kind === 'directory' ? 'threads-directory' : 'threads',
           },
         ],
         title,
@@ -191,6 +236,16 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
     () => formatUnresolvedThreadCountsSignature(unresolvedThreadCountsByItemId),
     [unresolvedThreadCountsByItemId]
   );
+  const directoryThreadCountsByPath = useMemo(() => {
+    if (unresolvedThreadCountsSignature === '') {
+      return new Map<string, number>();
+    }
+    return computeDirectoryThreadCountsByPath(
+      source,
+      unresolvedThreadCountsByItemIdRef.current
+    );
+  }, [source, unresolvedThreadCountsSignature]);
+  directoryThreadCountsByPathRef.current = directoryThreadCountsByPath;
 
   const { model } = useFileTree({
     ...BASE_FILE_TREE_OPTIONS,
@@ -282,14 +337,16 @@ export const CodeViewFileTree = memo(function CodeViewFileTree({
 });
 
 function formatFileTreeDecorationParts(
-  stats: CodeViewFileTreeFileStats | undefined
+  stats: CodeViewFileTreeFileStats | undefined,
+  rowKind: 'directory' | 'file'
 ): FileTreeRowDecorationTextPart[] {
+  const directory = rowKind === 'directory';
   const parts: FileTreeRowDecorationTextPart[] = [];
   if (stats != null && stats.addedLines > 0) {
     parts.push({
       text: `+${stats.addedLines}`,
       title: `${stats.addedLines} ${pluralize('addition', stats.addedLines)}`,
-      tone: 'added',
+      tone: directory ? 'added-directory' : 'added',
     });
   }
   if (stats != null && stats.deletedLines > 0) {
@@ -299,27 +356,71 @@ function formatFileTreeDecorationParts(
         'deletion',
         stats.deletedLines
       )}`,
-      tone: 'deleted',
+      tone: directory ? 'deleted-directory' : 'deleted',
     });
   }
   return parts;
 }
 
 function formatFileTreeDecorationTitle(
-  stats: CodeViewFileTreeFileStats | undefined
+  stats: CodeViewFileTreeFileStats | undefined,
+  rowKind: 'directory' | 'file'
 ): string {
+  const suffix = rowKind === 'directory' ? ' in folder' : '';
   const parts: string[] = [];
   if (stats != null && stats.addedLines > 0) {
     parts.push(
-      `${stats.addedLines} ${pluralize('addition', stats.addedLines)}`
+      `${stats.addedLines} ${pluralize('addition', stats.addedLines)}${suffix}`
     );
   }
   if (stats != null && stats.deletedLines > 0) {
     parts.push(
-      `${stats.deletedLines} ${pluralize('deletion', stats.deletedLines)}`
+      `${stats.deletedLines} ${pluralize('deletion', stats.deletedLines)}${suffix}`
     );
   }
   return parts.join(', ');
+}
+
+function getFileThreadCount(
+  source: CodeViewFileTreeSource,
+  countsByItemId: ReadonlyMap<string, number>,
+  path: string
+): number {
+  const itemId = source.pathToItemId.get(path);
+  return itemId == null ? 0 : (countsByItemId.get(itemId) ?? 0);
+}
+
+function computeDirectoryThreadCountsByPath(
+  source: CodeViewFileTreeSource,
+  countsByItemId: ReadonlyMap<string, number>
+): ReadonlyMap<string, number> {
+  const directoryCounts = new Map<string, number>();
+  for (let index = 0; index < source.pathCount; index++) {
+    const path = source.paths[index];
+    const count = getFileThreadCount(source, countsByItemId, path);
+    if (count <= 0) {
+      continue;
+    }
+
+    addCountToAncestorDirectories(directoryCounts, path, count);
+  }
+  return directoryCounts;
+}
+
+function addCountToAncestorDirectories(
+  countsByDirectoryPath: Map<string, number>,
+  filePath: string,
+  count: number
+): void {
+  let separatorIndex = filePath.indexOf('/');
+  while (separatorIndex !== -1) {
+    const directoryPath = filePath.slice(0, separatorIndex + 1);
+    countsByDirectoryPath.set(
+      directoryPath,
+      (countsByDirectoryPath.get(directoryPath) ?? 0) + count
+    );
+    separatorIndex = filePath.indexOf('/', separatorIndex + 1);
+  }
 }
 
 function pluralize(word: string, count: number): string {

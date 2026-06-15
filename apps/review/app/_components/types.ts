@@ -188,6 +188,7 @@ export interface CodeViewFileTreeFileStats {
 // read-only side; pathCount is what keeps later in-place growth invisible to
 // this snapshot.
 export interface CodeViewFileTreeSource {
+  directoryStatsByPath: ReadonlyMap<string, CodeViewFileTreeFileStats>;
   fileStatsByPath: ReadonlyMap<string, CodeViewFileTreeFileStats>;
   gitStatus: readonly GitStatusEntry[];
   gitStatusPatch?: FileTreeGitStatusPatch;

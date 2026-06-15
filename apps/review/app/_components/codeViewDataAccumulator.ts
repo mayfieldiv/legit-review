@@ -18,6 +18,7 @@ import type {
 import { mapChangeTypeToGitStatus } from './utils';
 
 export interface CodeViewDataAccumulator {
+  directoryStatsByPath: Map<string, CodeViewFileTreeFileStats>;
   diffStats: CodeViewDiffStats;
   fileIndex: number;
   fileStatsByPath: Map<string, CodeViewFileTreeFileStats>;
@@ -59,6 +60,7 @@ export interface LoadedCodeViewData {
 
 export function createCodeViewDataAccumulator(): CodeViewDataAccumulator {
   return {
+    directoryStatsByPath: new Map(),
     diffStats: {
       addedLines: 0,
       deletedLines: 0,
@@ -137,6 +139,11 @@ export function appendFileDiffToCodeViewData(
   if (previousPathState == null) {
     accumulator.paths.push(treePath);
   }
+  updateDirectoryStatsByPath(
+    accumulator,
+    treePath,
+    subtractFileStats(fileStats, accumulator.fileStatsByPath.get(treePath))
+  );
   accumulator.fileStatsByPath.set(treePath, fileStats);
   accumulator.pathToItemId.set(treePath, id);
   updateGitStatusByPath(
@@ -177,6 +184,7 @@ export function snapshotCodeViewTreeSource(
   const previousSource = accumulator.lastTreeSource;
   const gitStatusPatch = takePendingGitStatusPatch(accumulator);
   const snapshot: CodeViewFileTreeSource = {
+    directoryStatsByPath: accumulator.directoryStatsByPath,
     fileStatsByPath: accumulator.fileStatsByPath,
     gitStatus: Array.from(accumulator.gitStatusByPath.values()),
     gitStatusPatch: previousSource == null ? undefined : gitStatusPatch,
@@ -187,6 +195,42 @@ export function snapshotCodeViewTreeSource(
   };
   accumulator.lastTreeSource = snapshot;
   return snapshot;
+}
+
+function subtractFileStats(
+  current: CodeViewFileTreeFileStats,
+  previous: CodeViewFileTreeFileStats | undefined
+): CodeViewFileTreeFileStats {
+  return {
+    addedLines: current.addedLines - (previous?.addedLines ?? 0),
+    deletedLines: current.deletedLines - (previous?.deletedLines ?? 0),
+  };
+}
+
+function updateDirectoryStatsByPath(
+  accumulator: CodeViewDataAccumulator,
+  filePath: string,
+  delta: CodeViewFileTreeFileStats
+): void {
+  if (delta.addedLines === 0 && delta.deletedLines === 0) {
+    return;
+  }
+
+  let separatorIndex = filePath.indexOf('/');
+  while (separatorIndex !== -1) {
+    const directoryPath = filePath.slice(0, separatorIndex + 1);
+    const previous = accumulator.directoryStatsByPath.get(directoryPath);
+    const next = {
+      addedLines: (previous?.addedLines ?? 0) + delta.addedLines,
+      deletedLines: (previous?.deletedLines ?? 0) + delta.deletedLines,
+    };
+    if (next.addedLines === 0 && next.deletedLines === 0) {
+      accumulator.directoryStatsByPath.delete(directoryPath);
+    } else {
+      accumulator.directoryStatsByPath.set(directoryPath, next);
+    }
+    separatorIndex = filePath.indexOf('/', separatorIndex + 1);
+  }
 }
 
 function takePendingGitStatusPatch(

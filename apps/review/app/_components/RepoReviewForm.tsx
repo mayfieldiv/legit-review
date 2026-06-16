@@ -4,19 +4,27 @@ import {
   AlertCircle,
   CheckCircle2,
   GitBranch,
+  GitCommitHorizontal,
+  GitCompare,
   GitCompareArrows,
   Loader2,
   PencilLine,
   Upload,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
+import { CommitSelect, useRepoCommits } from './CommitPicker';
 import type {
+  CommitSummary,
   RepoReviewScopes,
   ReviewScopeId,
   ReviewScopeOption,
 } from '@/lib/git';
 import { cn } from '@/lib/utils';
+
+// The form tracks the three server-resolved working-tree scopes plus two local
+// commit-scope modes that require picking commits from a list.
+type FormScope = ReviewScopeId | 'single-commit' | 'commit-range';
 
 const FALLBACK_OPTIONS: ReviewScopeOption[] = [
   {
@@ -58,11 +66,14 @@ const FALLBACK_OPTIONS: ReviewScopeOption[] = [
 
 export function RepoReviewForm() {
   const [repo, setRepo] = useState('');
-  const [selectedScope, setSelectedScope] =
-    useState<ReviewScopeId>('branch-base');
+  const [selectedScope, setSelectedScope] = useState<FormScope>('branch-base');
   const [scopes, setScopes] = useState<RepoReviewScopes | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Commit-scope selections, kept independent so switching modes preserves them.
+  const [singleCommit, setSingleCommit] = useState<CommitSummary | null>(null);
+  const [rangeStart, setRangeStart] = useState<CommitSummary | null>(null);
+  const [rangeEnd, setRangeEnd] = useState<CommitSummary | null>(null);
 
   useEffect(() => {
     setScopes(null);
@@ -89,6 +100,7 @@ export function RepoReviewForm() {
         const nextScopes = (await response.json()) as RepoReviewScopes;
         setScopes(nextScopes);
         setSelectedScope((current) =>
+          isCommitScope(current) ||
           optionById(nextScopes.options, current)?.available === true
             ? current
             : 'branch-base'
@@ -130,6 +142,20 @@ export function RepoReviewForm() {
     [scopes]
   );
 
+  // Commits load only while a commit-scope mode is active and the repo has been
+  // resolved. The canonical repo path from /api/repo-scopes keys the fetch so
+  // it doesn't refire on every keystroke.
+  const commitScopeActive = isCommitScope(selectedScope);
+  const commitState = useRepoCommits(
+    scopes?.repoPath ?? null,
+    commitScopeActive
+  );
+
+  const commitSelectionIncomplete =
+    (selectedScope === 'single-commit' && singleCommit == null) ||
+    (selectedScope === 'commit-range' &&
+      (rangeStart == null || rangeEnd == null));
+
   return (
     <form action="/review" method="get" className="space-y-4">
       <label className="block space-y-1.5">
@@ -146,7 +172,24 @@ export function RepoReviewForm() {
         />
       </label>
 
-      <input name="base" type="hidden" value={baseValue} />
+      {/* Only the inputs for the active scope are rendered, so the native GET
+          submit carries exactly one scope's params. */}
+      {selectedScope === 'single-commit' ? (
+        singleCommit != null && (
+          <input name="commit" type="hidden" value={singleCommit.sha} />
+        )
+      ) : selectedScope === 'commit-range' ? (
+        <>
+          {rangeStart != null && (
+            <input name="from" type="hidden" value={rangeStart.sha} />
+          )}
+          {rangeEnd != null && (
+            <input name="to" type="hidden" value={rangeEnd.sha} />
+          )}
+        </>
+      ) : (
+        <input name="base" type="hidden" value={baseValue} />
+      )}
 
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium">Review scope</legend>
@@ -159,8 +202,81 @@ export function RepoReviewForm() {
               onSelect={() => setSelectedScope(option.id)}
             />
           ))}
+          <ModeButton
+            detail="Review one commit's changes (git show)"
+            icon={
+              <GitCommitHorizontal className="text-muted-foreground size-4 shrink-0" />
+            }
+            label="Single commit"
+            onSelect={() => setSelectedScope('single-commit')}
+            selected={selectedScope === 'single-commit'}
+          />
+          <ModeButton
+            detail="Review the diff across a span of commits"
+            icon={
+              <GitCompare className="text-muted-foreground size-4 shrink-0" />
+            }
+            label="Commit range"
+            onSelect={() => setSelectedScope('commit-range')}
+            selected={selectedScope === 'commit-range'}
+          />
         </div>
       </fieldset>
+
+      {commitScopeActive && (
+        <div className="space-y-2">
+          {scopes == null ? (
+            <p className="text-muted-foreground text-xs">
+              Enter a repository path to choose commits.
+            </p>
+          ) : selectedScope === 'single-commit' ? (
+            <CommitSelect
+              commits={commitState.commits}
+              error={commitState.error}
+              hasMore={commitState.hasMore}
+              loading={commitState.loading}
+              onChange={setSingleCommit}
+              onLoadMore={commitState.loadMore}
+              placeholder="Select a commit"
+              value={singleCommit}
+            />
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="space-y-1">
+                <span className="text-muted-foreground text-xs">
+                  Start (older, inclusive)
+                </span>
+                <CommitSelect
+                  commits={commitState.commits}
+                  error={commitState.error}
+                  hasMore={commitState.hasMore}
+                  loading={commitState.loading}
+                  onChange={setRangeStart}
+                  onLoadMore={commitState.loadMore}
+                  placeholder="Start commit"
+                  value={rangeStart}
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-muted-foreground text-xs">
+                  End (newer, inclusive)
+                </span>
+                <CommitSelect
+                  align="end"
+                  commits={commitState.commits}
+                  error={commitState.error}
+                  hasMore={commitState.hasMore}
+                  loading={commitState.loading}
+                  onChange={setRangeEnd}
+                  onLoadMore={commitState.loadMore}
+                  placeholder="End commit"
+                  value={rangeEnd}
+                />
+              </label>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="min-h-6">
         {errorMessage != null ? (
@@ -202,7 +318,8 @@ export function RepoReviewForm() {
       </div>
 
       <button
-        className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring/50 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md px-4 text-sm font-medium transition focus-visible:ring-2 focus-visible:outline-none"
+        className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring/50 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md px-4 text-sm font-medium transition focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-55"
+        disabled={commitSelectionIncomplete}
         type="submit"
       >
         <GitCompareArrows className="size-4" />
@@ -260,6 +377,43 @@ function ScopeButton({
   );
 }
 
+// A scope button for the commit-scope modes, which carry no server-resolved
+// badge (you pick the commits below instead).
+function ModeButton({
+  detail,
+  icon,
+  label,
+  onSelect,
+  selected,
+}: {
+  detail: string;
+  icon: ReactNode;
+  label: string;
+  onSelect: () => void;
+  selected: boolean;
+}) {
+  return (
+    <button
+      aria-pressed={selected}
+      className={cn(
+        'border-border bg-background focus-visible:ring-ring/50 grid min-h-14 w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-md border px-3 py-2 text-left transition hover:bg-accent/80 focus-visible:ring-2 focus-visible:outline-none',
+        selected &&
+          'border-foreground bg-accent text-accent-foreground shadow-xs'
+      )}
+      onClick={onSelect}
+      type="button"
+    >
+      {icon}
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium">{label}</span>
+        <span className="text-muted-foreground mt-0.5 block truncate text-xs">
+          {detail}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 function ScopeIcon({ id }: { id: ReviewScopeId }) {
   const className = 'text-muted-foreground size-4 shrink-0';
   if (id === 'unpushed') {
@@ -271,9 +425,13 @@ function ScopeIcon({ id }: { id: ReviewScopeId }) {
   return <GitBranch className={className} />;
 }
 
+function isCommitScope(scope: FormScope): boolean {
+  return scope === 'single-commit' || scope === 'commit-range';
+}
+
 function optionById(
   options: ReviewScopeOption[],
-  id: ReviewScopeId
+  id: string
 ): ReviewScopeOption | undefined {
   return options.find((option) => option.id === id);
 }

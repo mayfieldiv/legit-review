@@ -6,7 +6,7 @@ import {
   jsonResponse,
   parseJsonBody,
 } from '@/lib/api';
-import { loadDiffFileContents, resolveLocalDiffSource } from '@/lib/git';
+import { loadDiffFileContents, resolveReviewDiffSource } from '@/lib/git';
 
 const contentsRequestSchema = z.object({
   files: z
@@ -19,11 +19,12 @@ const contentsRequestSchema = z.object({
     .max(10_000),
 });
 
-// Full old/new contents for files in the review diff of ?repo=<abs
-// path>[&base=<ref>], so the client can expand unmodified context around
-// hunks. The old side comes from the merge-base blob, the new side from the
-// working tree; either is null when not available as text (missing, binary,
-// oversized, submodule).
+// Full old/new contents for files in the review diff of ?repo=<abs path>
+// (scope chosen by &commit=, &from=&to=, or &base=/none, matching /api/diff),
+// so the client can expand unmodified context around hunks. For working-tree
+// review the old side comes from the merge-base blob and the new side from the
+// working tree; for range review both sides come from commit blobs. Either is
+// null when not available as text (missing, binary, oversized, submodule).
 export async function POST(request: Request) {
   try {
     const url = new URL(request.url);
@@ -32,12 +33,16 @@ export async function POST(request: Request) {
       throw new ApiError('repo query parameter is required', 400);
     }
     const input = await parseJsonBody(request, contentsRequestSchema);
-    const source = await resolveLocalDiffSource(
-      repo,
-      url.searchParams.get('base')
-    );
+    const source = await resolveReviewDiffSource(repo, {
+      commit: url.searchParams.get('commit'),
+      from: url.searchParams.get('from'),
+      to: url.searchParams.get('to'),
+      base: url.searchParams.get('base'),
+    });
     const files = await loadDiffFileContents(source, input.files);
-    return jsonResponse({ mergeBase: source.mergeBase ?? null, files });
+    const oldRef =
+      source.kind === 'range' ? source.baseCommit : (source.mergeBase ?? null);
+    return jsonResponse({ mergeBase: oldRef, files });
   } catch (error) {
     return handleApiError(error);
   }

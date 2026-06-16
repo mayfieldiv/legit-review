@@ -14,9 +14,21 @@ local git and a durable review store.
 bun ws review dev   # http://127.0.0.1:3693 or http://susarch:3693 over Tailscale
 ```
 
-Open `/review?repo=/absolute/path/to/repo` (or use the picker at `/`). Optional
-`&base=<ref>` overrides the base ref; the default is the remote default branch,
-then `main`/`master`, then `HEAD` (working-tree-only review).
+Open `/review?repo=/absolute/path/to/repo` (or use the picker at `/`). The
+review scope is chosen by the remaining query params:
+
+- nothing / `&base=<ref>` — working tree against the base ref (default: the
+  remote default branch, then `main`/`master`, then `HEAD`).
+- `&commit=<ref>` — a single commit's diff (`git show`, i.e. `git diff C^ C`).
+  The header shows prev/next controls and `[` / `]` step to the older / newer
+  commit along HEAD's first-parent history.
+- `&from=<ref>&to=<ref>` — a commit range, inclusive of both endpoints
+  (`git diff <from>^ <to>`). Endpoint order doesn't matter; ancestry decides
+  which is older.
+
+Commit-scope reviews diff immutable SHAs, so they don't live-reload on
+working-tree edits. Pick commits from the Open Repository form, or jump scopes
+from any open review via the scope label in the header.
 
 ## What it does
 
@@ -70,8 +82,9 @@ Loopback-only REST, keyed by `?repo=<absolute path>`:
 | `DELETE /api/comments/:id/replies/:replyId`    | Delete a reply                                                                  |
 | `PUT /api/viewed`                              | Set/clear viewed marks (hunk- and/or file-level, one call)                      |
 | `GET /api/events`                              | SSE: `diff-changed`, `state-changed`                                            |
-| `GET /api/diff`                                | The unified diff the viewer renders                                             |
+| `GET /api/diff`                                | The unified diff the viewer renders (scope via `commit`/`from`+`to`/`base`)     |
 | `POST /api/contents`                           | Full old/new contents for diffed files (context expansion)                      |
+| `GET /api/commits?limit=&skip=`                | Commits newest-first along HEAD, for the commit picker                          |
 
 When `POST /api/comments` is called without a `hunkHash` (the browser always
 sends one), the server anchors the comment itself: a line inside a diff hunk

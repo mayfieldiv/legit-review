@@ -4,6 +4,7 @@ import { type DiffIndicators } from '@pierre/diffs';
 import { type CodeViewHandle, useWorkerPool } from '@pierre/diffs/react';
 import { type ColorMode } from '@pierre/theming';
 import { useThemeController } from '@pierre/theming/react';
+import { useRouter } from 'next/navigation';
 import {
   type ReactNode,
   useCallback,
@@ -18,6 +19,7 @@ import { CodeViewHeader } from './CodeViewHeader';
 import { CodeViewSidebar } from './CodeViewSidebar';
 import { CodeViewStatusPanel } from './CodeViewStatusPanel';
 import { CodeViewWrapper } from './CodeViewWrapper';
+import { singleCommitReviewHref } from './reviewLinks';
 import type { DarkThemeName, LightThemeName } from './themeNames';
 import type {
   CodeViewDeletedCommentEvent,
@@ -43,20 +45,29 @@ import {
 
 interface ReviewUIProps {
   base?: string;
+  commit?: string;
+  from?: string;
+  to?: string;
   repo: string;
 }
 
-export function ReviewUI({ base, repo }: ReviewUIProps) {
+export function ReviewUI({ base, commit, from, to, repo }: ReviewUIProps) {
   // Provide the app-scoped theme context, then render the body BELOW it so
   // the diffs hook + selection hook can read the controller context.
   return (
     <ThemeProvider controller={themeController}>
-      <ReviewUIInner base={base} repo={repo} />
+      <ReviewUIInner
+        base={base}
+        commit={commit}
+        from={from}
+        to={to}
+        repo={repo}
+      />
     </ThemeProvider>
   );
 }
 
-function ReviewUIInner({ base, repo }: ReviewUIProps) {
+function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
   const isWorkerPoolReadyOrDisable = useIsWorkerPoolReadyOrDisabled();
   const [diffStyle, setDiffStyle] = useState<'split' | 'unified'>('split');
   const [collapseMode, setCollapseMode] = useState<'expanded' | 'collapsed'>(
@@ -146,11 +157,65 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
     viewerKey,
   } = usePatchLoader({
     base,
+    commit,
+    from,
+    to,
     collapseMode,
     onLoadStart: handlePatchLoadStart,
     repo,
     viewerRef,
   });
+
+  // A commit-scope review (single commit or range) diffs immutable SHAs, so
+  // working-tree edits can't change it — skip the diff-reload path and keep
+  // only the state-changed (comments/viewed) updates below.
+  const isCommitScope =
+    (commit != null && commit !== '') ||
+    (from != null && from !== '') ||
+    (to != null && to !== '');
+
+  // Single-commit prev/next navigation. prevSha is the older commit, nextSha
+  // the newer; both are resolved server-side and ride in on sourceInfo, and
+  // are present only in single-commit mode.
+  const router = useRouter();
+  const prevCommitSha =
+    sourceInfo?.mode === 'single' ? (sourceInfo.prevSha ?? null) : null;
+  const nextCommitSha =
+    sourceInfo?.mode === 'single' ? (sourceInfo.nextSha ?? null) : null;
+  const navigateToCommit = useCallback(
+    (sha: string | null) => {
+      if (sha != null) {
+        router.push(singleCommitReviewHref(repo, sha));
+      }
+    },
+    [repo, router]
+  );
+  // `[` steps to the older commit, `]` to the newer — from anywhere on the
+  // page, but never while typing in a comment editor.
+  useEffect(() => {
+    if (sourceInfo?.mode !== 'single') {
+      return;
+    }
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        isTypingTarget(event.target)
+      ) {
+        return;
+      }
+      if (event.key === '[') {
+        event.preventDefault();
+        navigateToCommit(prevCommitSha);
+      } else if (event.key === ']') {
+        event.preventDefault();
+        navigateToCommit(nextCommitSha);
+      }
+    };
+    window.addEventListener('keydown', handleKeydown);
+    return () => window.removeEventListener('keydown', handleKeydown);
+  }, [sourceInfo?.mode, prevCommitSha, nextCommitSha, navigateToCommit]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 767px)');
@@ -191,6 +256,10 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
     const source = new EventSource(`/api/events?${params}`);
     let debounceTimer: number | undefined;
     const handleDiffChanged = () => {
+      // Immutable commit-scope reviews never need a diff reload.
+      if (isCommitScope) {
+        return;
+      }
       window.clearTimeout(debounceTimer);
       debounceTimer = window.setTimeout(reloadDiff, 250);
     };
@@ -203,7 +272,7 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
       window.clearTimeout(debounceTimer);
       source.close();
     };
-  }, [refreshReviewState, reloadDiff, repo]);
+  }, [isCommitScope, refreshReviewState, reloadDiff, repo]);
   useEffect(() => {
     if (loadState !== 'ready') {
       return;
@@ -597,6 +666,7 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
         fileTreeAvailable={treeSource != null}
         onToggleCollapseMode={handleToggleCollapseMode}
         onToggleFileTreeOverlay={handleToggleFileTreeOverlay}
+        repo={repo}
         sourceInfo={sourceInfo}
         setColorMode={setColorMode}
         setDarkThemeName={setDarkThemeName}
@@ -660,6 +730,21 @@ function ReviewUIInner({ base, repo }: ReviewUIProps) {
         />
       )}
     </ReviewGrid>
+  );
+}
+
+// True when the event target is a text-entry control, so global key handlers
+// (commit nav) don't fire while the user is typing in a comment editor.
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  const tag = target.tagName;
+  return (
+    tag === 'INPUT' ||
+    tag === 'TEXTAREA' ||
+    tag === 'SELECT' ||
+    target.isContentEditable
   );
 }
 

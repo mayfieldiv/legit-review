@@ -3,20 +3,24 @@ import { ReviewUI } from '../_components/ReviewUI';
 
 interface ReviewPageSearchParams {
   base?: string | string[];
+  commit?: string | string[];
+  from?: string | string[];
+  to?: string | string[];
   repo?: string | string[];
 }
 
-// Local branch review viewer. ?repo= is the absolute path of the repository
-// to review; ?base= optionally overrides the base ref (defaults to the remote
+// Local branch review viewer. ?repo= is the absolute path of the repository to
+// review. The scope is chosen by the remaining params: ?commit= reviews a
+// single commit, ?from=&to= reviews a commit range, and ?base= (or none)
+// reviews the working tree against the base ref (defaults to the remote
 // default branch, then main/master, then HEAD).
 export default async function ReviewPage({
   searchParams,
 }: {
   searchParams: Promise<ReviewPageSearchParams>;
 }) {
-  const { repo, base } = await searchParams;
+  const { repo, base, commit, from, to } = await searchParams;
   const repoPath = firstParam(repo);
-  const baseRef = firstParam(base);
 
   if (repoPath == null || repoPath === '') {
     return <RepoHome />;
@@ -24,7 +28,13 @@ export default async function ReviewPage({
 
   return (
     <div className="flex h-dvh flex-col gap-2">
-      <ReviewUI base={baseRef} repo={repoPath} />
+      <ReviewUI
+        base={firstParam(base)}
+        commit={firstParam(commit)}
+        from={firstParam(from)}
+        to={firstParam(to)}
+        repo={repoPath}
+      />
     </div>
   );
 }

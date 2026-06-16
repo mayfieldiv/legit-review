@@ -12,6 +12,10 @@ const BINARY_SNIFF_BYTES = 8000;
 // Full file contents (for hunk expansion) above this size are reported as
 // unavailable instead of shipped to the browser.
 const MAX_CONTEXT_FILE_BYTES = 10 * 1024 * 1024;
+// Git's well-known hash of the empty tree. Used as the old side when a range's
+// start commit is a root commit (it has no parent to diff against), so a root
+// commit reviews as an all-additions diff.
+const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 // Request-mappable failure: `status` becomes the HTTP status of the response.
 export class GitRequestError extends Error {
@@ -23,13 +27,56 @@ export class GitRequestError extends Error {
   }
 }
 
+// Working-tree review: the new side of every diff is the live working tree,
+// the old side is `mergeBase`. This backs the branch-base/unpushed/uncommitted
+// scopes and live-reloads as the tree changes.
 export interface LocalDiffSource {
+  kind: 'working-tree';
   repoPath: string;
   branch: string;
   baseRef: string;
   // Commit the tracked diff is computed against. Undefined when HEAD has no
   // commits yet (fresh repo) — only untracked files are emitted then.
   mergeBase: string | undefined;
+}
+
+// Commit-range review: both sides are immutable commits, no working tree
+// involved. The diff is `git diff <baseCommit> <toRef>`, where `baseCommit` is
+// the parent of the (inclusive) start commit — so a single commit reviews as
+// `git show` and a range includes both endpoints' changes.
+export interface RangeDiffSource {
+  kind: 'range';
+  repoPath: string;
+  branch: string;
+  // Oldest and newest commits included in the review, resolved to full SHAs.
+  fromRef: string;
+  toRef: string;
+  // Old side of the diff: parent of `fromRef`, or the empty tree when `fromRef`
+  // is a root commit.
+  baseCommit: string;
+  // True when the range is a single commit (`fromRef === toRef`).
+  single: boolean;
+  fromSubject: string;
+  toSubject: string;
+}
+
+export type ReviewDiffSource = LocalDiffSource | RangeDiffSource;
+
+// Newest-first commit on a branch as the picker and navigation consume it.
+export interface CommitSummary {
+  sha: string;
+  shortSha: string;
+  subject: string;
+  authorName: string;
+  authorDate: string;
+}
+
+// Adjacent commits along HEAD's first-parent history, used by single-commit
+// review's prev/next controls. `prevSha` is older (the parent), `nextSha` is
+// newer (the child toward HEAD). Either is null at the ends of history.
+export interface CommitNeighbors {
+  prevSha: string | null;
+  nextSha: string | null;
 }
 
 export type ReviewScopeId = 'branch-base' | 'unpushed' | 'uncommitted';
@@ -613,7 +660,229 @@ export async function resolveLocalDiffSource(
       (await gitText(repoPath, ['merge-base', baseRef, 'HEAD'])) ?? headSha;
   }
 
-  return { repoPath, branch, baseRef, mergeBase };
+  return { kind: 'working-tree', repoPath, branch, baseRef, mergeBase };
+}
+
+export interface ReviewDiffSourceParams {
+  commit?: string | null;
+  from?: string | null;
+  to?: string | null;
+  base?: string | null;
+}
+
+// Resolves the diff source a review request asks for from its query params:
+// `commit` (single commit), `from`+`to` (commit range), or `base`/none
+// (working-tree review). Single commit is a range whose endpoints are equal.
+export async function resolveReviewDiffSource(
+  repoInput: string,
+  params: ReviewDiffSourceParams
+): Promise<ReviewDiffSource> {
+  const commit = nonEmptyParam(params.commit);
+  const from = nonEmptyParam(params.from);
+  const to = nonEmptyParam(params.to);
+  if (commit != null) {
+    return resolveRangeDiffSource(repoInput, commit, commit);
+  }
+  if (from != null || to != null) {
+    if (from == null || to == null) {
+      throw new GitRequestError(
+        'Both from and to commits are required for a range review'
+      );
+    }
+    return resolveRangeDiffSource(repoInput, from, to);
+  }
+  return resolveLocalDiffSource(repoInput, params.base ?? null);
+}
+
+function nonEmptyParam(value: string | null | undefined): string | null {
+  return value != null && value !== '' ? value : null;
+}
+
+// Resolves a user-supplied ref to a full commit SHA, rejecting anything that
+// is not a commit so a typo can't silently diff the wrong object.
+async function resolveCommitSha(
+  repoPath: string,
+  ref: string,
+  label: string
+): Promise<string> {
+  const sha = await gitText(repoPath, [
+    'rev-parse',
+    '--verify',
+    '--quiet',
+    `${ref}^{commit}`,
+  ]);
+  if (sha == null || sha === '') {
+    throw new GitRequestError(`${label} commit not found: ${ref}`);
+  }
+  return sha;
+}
+
+async function commitSubject(repoPath: string, sha: string): Promise<string> {
+  return (await gitText(repoPath, ['log', '-1', '--format=%s', sha])) ?? '';
+}
+
+// Resolves a commit-range review source. `from`/`to` may be given in either
+// order; ancestry decides which is older. The diff baseline is the parent of
+// the older commit (so both endpoints' changes are included), falling back to
+// the empty tree for a root start commit. For commits on divergent histories
+// (neither is an ancestor of the other) the user's `from` becomes the baseline
+// directly, which still yields a valid tree-to-tree diff.
+export async function resolveRangeDiffSource(
+  repoInput: string,
+  fromInput: string,
+  toInput: string
+): Promise<RangeDiffSource> {
+  const { repoPath, branch } = await resolveRepoIdentity(repoInput);
+  const [fromSha, toSha] = await Promise.all([
+    resolveCommitSha(repoPath, fromInput, 'Start'),
+    resolveCommitSha(repoPath, toInput, 'End'),
+  ]);
+
+  let olderSha = fromSha;
+  let newerSha = toSha;
+  let divergent = false;
+  if (fromSha !== toSha) {
+    if (await isAncestor(repoPath, fromSha, toSha)) {
+      olderSha = fromSha;
+      newerSha = toSha;
+    } else if (await isAncestor(repoPath, toSha, fromSha)) {
+      olderSha = toSha;
+      newerSha = fromSha;
+    } else {
+      divergent = true;
+    }
+  }
+
+  // Inclusive of the older commit: diff against its parent. Divergent picks
+  // can't be made inclusive coherently, so the older commit is the baseline.
+  const baseCommit = divergent
+    ? olderSha
+    : ((await gitText(repoPath, [
+        'rev-parse',
+        '--verify',
+        '--quiet',
+        `${olderSha}^`,
+      ])) ?? EMPTY_TREE_SHA);
+
+  const [fromSubject, toSubject] = await Promise.all([
+    commitSubject(repoPath, olderSha),
+    commitSubject(repoPath, newerSha),
+  ]);
+
+  return {
+    kind: 'range',
+    repoPath,
+    branch,
+    fromRef: olderSha,
+    toRef: newerSha,
+    baseCommit,
+    single: olderSha === newerSha,
+    fromSubject,
+    toSubject,
+  };
+}
+
+async function isAncestor(
+  repoPath: string,
+  ancestor: string,
+  descendant: string
+): Promise<boolean> {
+  const result = await runGit(repoPath, [
+    'merge-base',
+    '--is-ancestor',
+    ancestor,
+    descendant,
+  ]);
+  return result.code === 0;
+}
+
+// Lists commits newest-first along HEAD for the commit picker. `limit` caps the
+// page; `skip` pages further back. `hasMore` is true when a full page came
+// back, so the caller can offer a "load more".
+export async function listRepoCommits(
+  repoInput: string,
+  { limit = 100, skip = 0 }: { limit?: number; skip?: number } = {}
+): Promise<{ commits: CommitSummary[]; hasMore: boolean }> {
+  const { repoPath } = await resolveRepoIdentity(repoInput);
+  const headSha = await gitText(repoPath, [
+    'rev-parse',
+    '--verify',
+    '--quiet',
+    'HEAD^{commit}',
+  ]);
+  if (headSha == null || headSha === '') {
+    return { commits: [], hasMore: false };
+  }
+
+  // NUL between fields, newline between records — subjects (%s) never contain a
+  // newline, so records stay unambiguous.
+  const result = await runGit(repoPath, [
+    'log',
+    '--no-color',
+    `--max-count=${limit}`,
+    `--skip=${skip}`,
+    '--pretty=format:%H%x00%h%x00%an%x00%aI%x00%s',
+    'HEAD',
+  ]);
+  if (result.code !== 0) {
+    throw new GitRequestError(
+      `Unable to list commits: ${result.stderr.trim()}`
+    );
+  }
+
+  const text = result.stdout.toString('utf8');
+  const commits: CommitSummary[] = [];
+  for (const line of text.split('\n')) {
+    if (line === '') {
+      continue;
+    }
+    const [sha, shortSha, authorName, authorDate, subject] = line.split('\0');
+    if (sha == null) {
+      continue;
+    }
+    commits.push({
+      sha,
+      shortSha: shortSha ?? sha.slice(0, 7),
+      subject: subject ?? '',
+      authorName: authorName ?? '',
+      authorDate: authorDate ?? '',
+    });
+  }
+  return { commits, hasMore: commits.length === limit };
+}
+
+// Finds the commits adjacent to `commit` along HEAD's first-parent history.
+// `prevSha` (older) is the commit's first parent. `nextSha` (newer) is the
+// first commit on the ancestry path from `commit` to HEAD — bounded to that
+// path, so it never walks the whole history.
+export async function resolveCommitNeighbors(
+  repoInput: string,
+  commit: string
+): Promise<CommitNeighbors> {
+  const { repoPath } = await resolveRepoIdentity(repoInput);
+  const sha = await resolveCommitSha(repoPath, commit, 'Commit');
+
+  const prevSha =
+    (await gitText(repoPath, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      `${sha}^`,
+    ])) ?? null;
+
+  const ancestryPath = await gitText(repoPath, [
+    'rev-list',
+    '--ancestry-path',
+    '--first-parent',
+    '--reverse',
+    `${sha}..HEAD`,
+  ]);
+  const nextSha =
+    ancestryPath == null || ancestryPath === ''
+      ? null
+      : (ancestryPath.split('\n')[0] ?? null);
+
+  return { prevSha, nextSha };
 }
 
 // Cheap fingerprint of everything the review diff depends on: the current
@@ -653,36 +922,50 @@ export async function computeRepoSignature(repoPath: string): Promise<string> {
   return hash.digest('hex');
 }
 
-// Streams the full review patch: `git diff <merge-base>` (working tree
-// included) followed by synthesized new-file patches for untracked files,
-// which git diff does not emit on its own.
+// Streams the full review patch. Working-tree review emits `git diff
+// <merge-base>` (working tree included) followed by synthesized new-file
+// patches for untracked files, which git diff does not emit on its own.
+// Range review emits `git diff <baseCommit> <toRef>` only — both sides are
+// committed, so there are no untracked files to synthesize.
 export function createLocalDiffStream(
-  source: LocalDiffSource
+  source: ReviewDiffSource
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let cancelled = false;
   let killDiffProcess: (() => void) | undefined;
+  const registerKill = (kill: () => void) => {
+    killDiffProcess = kill;
+  };
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        if (source.mergeBase != null) {
-          await pumpTrackedDiff(
-            source,
+        if (source.kind === 'range') {
+          await pumpGitDiff(
+            source.repoPath,
+            [source.baseCommit, source.toRef],
             controller,
-            (kill) => {
-              killDiffProcess = kill;
-            },
+            registerKill,
             () => cancelled
           );
-        }
-        if (!cancelled) {
-          await pumpUntrackedFiles(
-            source,
-            controller,
-            encoder,
-            () => cancelled
-          );
+        } else {
+          if (source.mergeBase != null) {
+            await pumpGitDiff(
+              source.repoPath,
+              [source.mergeBase],
+              controller,
+              registerKill,
+              () => cancelled
+            );
+          }
+          if (!cancelled) {
+            await pumpUntrackedFiles(
+              source.repoPath,
+              controller,
+              encoder,
+              () => cancelled
+            );
+          }
         }
         if (!cancelled) {
           controller.close();
@@ -700,8 +983,12 @@ export function createLocalDiffStream(
   });
 }
 
-function pumpTrackedDiff(
-  source: LocalDiffSource,
+// Runs `git diff <...diffRevs>` and pumps its stdout to the stream. `diffRevs`
+// is a single rev (diff against the working tree) for working-tree review, or
+// two commits (old then new) for range review.
+function pumpGitDiff(
+  repoPath: string,
+  diffRevs: string[],
   controller: ReadableStreamDefaultController<Uint8Array>,
   registerKill: (kill: () => void) => void,
   isCancelled: () => boolean
@@ -711,12 +998,12 @@ function pumpTrackedDiff(
       'git',
       [
         '-C',
-        source.repoPath,
+        repoPath,
         'diff',
         '--find-renames',
         '--no-color',
         '--no-ext-diff',
-        source.mergeBase as string,
+        ...diffRevs,
       ],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     );
@@ -745,17 +1032,17 @@ function pumpTrackedDiff(
 }
 
 async function pumpUntrackedFiles(
-  source: LocalDiffSource,
+  repoPath: string,
   controller: ReadableStreamDefaultController<Uint8Array>,
   encoder: TextEncoder,
   isCancelled: () => boolean
 ): Promise<void> {
-  const untrackedPaths = await listUntrackedFiles(source.repoPath);
+  const untrackedPaths = await listUntrackedFiles(repoPath);
   for (const filePath of untrackedPaths) {
     if (isCancelled()) {
       return;
     }
-    const patch = await synthesizeUntrackedPatch(source.repoPath, filePath);
+    const patch = await synthesizeUntrackedPatch(repoPath, filePath);
     if (patch != null && !isCancelled()) {
       controller.enqueue(encoder.encode(patch));
     }
@@ -851,14 +1138,42 @@ export interface DiffFileContents {
 }
 
 // Loads both sides of each diffed file in full, so the client can offer
-// GitHub-style expansion of unmodified context around hunks. The old side is
-// the blob at the merge base (what the review diff was computed against), the
-// new side is the working tree. Either side is null when unavailable as text:
-// missing path, non-blob (submodule), binary, or oversized.
+// GitHub-style expansion of unmodified context around hunks. Either side is
+// null when unavailable as text: missing path, non-blob (submodule), binary,
+// or oversized. For working-tree review the old side is the merge-base blob and
+// the new side is the working tree; for range review both sides are commit
+// blobs (`baseCommit` and `toRef`).
 export async function loadDiffFileContents(
-  source: LocalDiffSource,
+  source: ReviewDiffSource,
   files: DiffFileContentsRequest[]
 ): Promise<DiffFileContents[]> {
+  if (source.kind === 'range') {
+    const [oldTexts, newTexts] = await Promise.all([
+      loadBlobTexts(
+        source.repoPath,
+        files.map((file) => {
+          const sourcePath = file.prevPath ?? file.path;
+          return isSafeRepoRelativePath(sourcePath)
+            ? `${source.baseCommit}:${sourcePath}`
+            : null;
+        })
+      ),
+      loadBlobTexts(
+        source.repoPath,
+        files.map((file) =>
+          isSafeRepoRelativePath(file.path)
+            ? `${source.toRef}:${file.path}`
+            : null
+        )
+      ),
+    ]);
+    return files.map((file, index) => ({
+      path: file.path,
+      oldContents: oldTexts[index] ?? null,
+      newContents: newTexts[index] ?? null,
+    }));
+  }
+
   const { mergeBase } = source;
   const oldTexts =
     mergeBase == null

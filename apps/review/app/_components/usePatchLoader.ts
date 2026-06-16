@@ -83,6 +83,9 @@ const EXTRA_FILE_ITEM_ID_PREFIX = 'file:';
 
 interface UsePatchLoaderOptions {
   base?: string;
+  commit?: string;
+  from?: string;
+  to?: string;
   collapseMode: 'expanded' | 'collapsed';
   onLoadStart(): void;
   repo: string;
@@ -119,6 +122,9 @@ interface UsePatchLoaderResult {
 
 export function usePatchLoader({
   base,
+  commit,
+  from,
+  to,
   collapseMode,
   onLoadStart,
   repo,
@@ -515,10 +521,12 @@ export function usePatchLoader({
       }
       let payload: FullContextResponse;
       try {
-        const params = new URLSearchParams({ repo });
-        if (base != null && base !== '') {
-          params.set('base', base);
-        }
+        const params = buildReviewRequestParams(repo, {
+          base,
+          commit,
+          from,
+          to,
+        });
         const response = await fetch(`/api/contents?${params}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -768,11 +776,9 @@ export function usePatchLoader({
   );
 
   useEffect(() => {
-    const patchRequestKey = base == null ? repo : `${repo}@${base}`;
-    const patchSearchParams = new URLSearchParams({ repo });
-    if (base != null && base !== '') {
-      patchSearchParams.set('base', base);
-    }
+    const scope = { base, commit, from, to };
+    const patchRequestKey = getReviewRequestKey(repo, scope);
+    const patchSearchParams = buildReviewRequestParams(repo, scope);
 
     const controller = new AbortController();
     const requestId = ++requestIdRef.current;
@@ -1189,6 +1195,9 @@ export function usePatchLoader({
     };
   }, [
     base,
+    commit,
+    from,
+    to,
     hydrateReviewState,
     loadAttempt,
     onLoadStart,
@@ -1236,15 +1245,88 @@ export function usePatchLoader({
 function parseReviewSourceInfo(headers: Headers): ReviewSourceInfo | null {
   const repoPath = headers.get('X-Review-Repo');
   const branch = headers.get('X-Review-Branch');
-  const baseRef = headers.get('X-Review-Base');
-  if (repoPath == null || branch == null || baseRef == null) {
+  if (repoPath == null || branch == null) {
     return null;
   }
-  return {
+  const mode = headers.get('X-Review-Mode');
+  const base: Pick<ReviewSourceInfo, 'repoPath' | 'branch'> = {
     repoPath: decodeURIComponent(repoPath),
     branch: decodeURIComponent(branch),
-    baseRef: decodeURIComponent(baseRef),
   };
+
+  if (mode === 'range' || mode === 'single') {
+    const prev = headers.get('X-Review-Prev');
+    const next = headers.get('X-Review-Next');
+    return {
+      ...base,
+      mode,
+      fromSha: decodeHeader(headers.get('X-Review-From')),
+      toSha: decodeHeader(headers.get('X-Review-To')),
+      fromSubject: decodeHeader(headers.get('X-Review-From-Subject')),
+      toSubject: decodeHeader(headers.get('X-Review-To-Subject')),
+      prevSha: prev == null || prev === '' ? null : prev,
+      nextSha: next == null || next === '' ? null : next,
+    };
+  }
+
+  return {
+    ...base,
+    mode: 'working-tree',
+    baseRef: decodeHeader(headers.get('X-Review-Base')),
+  };
+}
+
+function decodeHeader(value: string | null): string | undefined {
+  return value == null ? undefined : decodeURIComponent(value);
+}
+
+interface ReviewRequestScope {
+  base?: string;
+  commit?: string;
+  from?: string;
+  to?: string;
+}
+
+// Builds the /api/diff and /api/contents query for a review request. Exactly
+// one scope wins, mirroring the server: `commit` (single), `from`+`to` (range),
+// then `base` (working tree), then none (auto base).
+function buildReviewRequestParams(
+  repo: string,
+  scope: ReviewRequestScope
+): URLSearchParams {
+  const params = new URLSearchParams({ repo });
+  if (isSet(scope.commit)) {
+    params.set('commit', scope.commit);
+  } else if (isSet(scope.from) || isSet(scope.to)) {
+    if (isSet(scope.from)) {
+      params.set('from', scope.from);
+    }
+    if (isSet(scope.to)) {
+      params.set('to', scope.to);
+    }
+  } else if (isSet(scope.base)) {
+    params.set('base', scope.base);
+  }
+  return params;
+}
+
+// Stable identity for the request, used to salt tokenization cache keys so
+// reloads of changed content don't collide across scopes.
+function getReviewRequestKey(repo: string, scope: ReviewRequestScope): string {
+  if (isSet(scope.commit)) {
+    return `${repo}@commit:${scope.commit}`;
+  }
+  if (isSet(scope.from) || isSet(scope.to)) {
+    return `${repo}@range:${scope.from ?? ''}..${scope.to ?? ''}`;
+  }
+  if (isSet(scope.base)) {
+    return `${repo}@${scope.base}`;
+  }
+  return repo;
+}
+
+function isSet(value: string | undefined): value is string {
+  return value != null && value !== '';
 }
 
 function getLineHashApplyKey(viewerKey: number, hash: string): string {

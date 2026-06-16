@@ -31,6 +31,8 @@ import {
 import { diffshubChromeMapping } from './_theming/js/diffshubChromeMapping';
 import { useChromeThemeProps } from './_theming/react/useChromeThemeProps';
 import { DiffsHubLogo } from './DiffsHubLogo';
+import { singleCommitReviewHref } from './reviewLinks';
+import { ReviewScopeSwitcher } from './ReviewScopeSwitcher';
 import type { ReviewSourceInfo } from './types';
 import { docsThemeCatalog } from '@/components/themeCatalog';
 import { Button } from '@/components/ui/button';
@@ -66,6 +68,7 @@ interface HeaderProps {
   overflow: 'wrap' | 'scroll';
   onToggleCollapseMode(): void;
   onToggleFileTreeOverlay(): void;
+  repo: string;
   sourceInfo: ReviewSourceInfo | null;
   setColorMode(mode: ColorMode): void;
   setDarkThemeName(name: DarkThemeName): void;
@@ -92,6 +95,7 @@ export const CodeViewHeader = memo(function CodeViewHeader({
   overflow,
   onToggleCollapseMode,
   onToggleFileTreeOverlay,
+  repo,
   sourceInfo,
   setColorMode,
   setDarkThemeName,
@@ -132,19 +136,17 @@ export const CodeViewHeader = memo(function CodeViewHeader({
       >
         <DiffsHubLogo />
       </Link>
-      <div className="hidden min-w-0 items-baseline gap-2 font-mono text-xs md:mr-auto md:flex">
+      <div className="hidden min-w-0 items-center gap-2 font-mono text-xs md:mr-auto md:flex">
         {sourceInfo != null && (
           <>
-            <span
-              className="truncate"
-              title={`${sourceInfo.branch} against ${sourceInfo.baseRef}`}
-            >
-              {sourceInfo.branch}
-              <span className="text-muted-foreground">
-                {' '}
-                ← {sourceInfo.baseRef}
-              </span>
-            </span>
+            <ReviewScopeSwitcher repo={repo} sourceInfo={sourceInfo} />
+            {sourceInfo.mode === 'single' && (
+              <CommitNavButtons
+                nextSha={sourceInfo.nextSha ?? null}
+                prevSha={sourceInfo.prevSha ?? null}
+                repo={repo}
+              />
+            )}
             <span
               className="text-muted-foreground hidden truncate lg:inline"
               title={sourceInfo.repoPath}
@@ -304,6 +306,71 @@ export const CodeViewHeader = memo(function CodeViewHeader({
     </div>
   );
 });
+
+// Prev/next commit controls for single-commit review. `prevSha` is the older
+// commit, `nextSha` the newer; either is null at the ends of history. They sit
+// in the always-visible header and mirror the `[` / `]` keyboard shortcuts.
+function CommitNavButtons({
+  nextSha,
+  prevSha,
+  repo,
+}: {
+  nextSha: string | null;
+  prevSha: string | null;
+  repo: string;
+}) {
+  return (
+    <span className="flex items-center">
+      <CommitNavButton direction="prev" repo={repo} sha={prevSha} />
+      <CommitNavButton direction="next" repo={repo} sha={nextSha} />
+    </span>
+  );
+}
+
+function CommitNavButton({
+  direction,
+  repo,
+  sha,
+}: {
+  direction: 'prev' | 'next';
+  repo: string;
+  sha: string | null;
+}) {
+  const isPrev = direction === 'prev';
+  const title = isPrev ? 'Older commit ( [ )' : 'Newer commit ( ] )';
+  const icon = (
+    <IconChevronSm
+      className={cn('size-4 md:size-3', isPrev ? 'rotate-90' : '-rotate-90')}
+    />
+  );
+  if (sha == null) {
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-md"
+        disabled
+        title={title}
+        className="hover:text-muted-foreground hover:bg-transparent"
+      >
+        {icon}
+      </Button>
+    );
+  }
+  return (
+    <Button
+      asChild
+      variant="ghost"
+      size="icon-md"
+      title={title}
+      className="hover:text-muted-foreground hover:bg-transparent"
+    >
+      <Link href={singleCommitReviewHref(repo, sha)} prefetch={false}>
+        {icon}
+      </Link>
+    </Button>
+  );
+}
 
 function colorModeIcon(colorMode: ColorMode) {
   if (colorMode === 'light') return IconColorLight;

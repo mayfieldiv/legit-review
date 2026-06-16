@@ -14,12 +14,23 @@ export type ViewerLoadState =
   | 'ready'
   | 'error';
 
+export type ReviewMode = 'working-tree' | 'range' | 'single';
+
 // Resolved identity of the local diff being reviewed, parsed from the
-// X-Review-* response headers of /api/diff.
+// X-Review-* response headers of /api/diff. `baseRef` is set for working-tree
+// review; the commit fields are set for range/single review, with prev/next
+// neighbors present only in single-commit mode.
 export interface ReviewSourceInfo {
   repoPath: string;
   branch: string;
-  baseRef: string;
+  mode: ReviewMode;
+  baseRef?: string;
+  fromSha?: string;
+  toSha?: string;
+  fromSubject?: string;
+  toSubject?: string;
+  prevSha?: string | null;
+  nextSha?: string | null;
 }
 
 // One non-root thread entry as the UI consumes it: either a discussion reply or

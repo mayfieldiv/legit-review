@@ -1534,7 +1534,15 @@
       ease-in-out;
   }
 
-  @container measure (height > 1lh) {
+  /* Fire the marker only once the hidden wrapping copy is clearly into a
+   * second line. That copy is ~1lh tall when the text fits and ~2lh once it
+   * wraps, so the 1.5lh midpoint absorbs the sub-pixel / line-box rounding
+   * that otherwise tripped the marker on text that actually fit — the cause of
+   * double-truncated names ("back……end" instead of "backend") in Chrome on
+   * macOS, where system-ui (San Francisco) and line-box rounding differ from
+   * other platforms. Any threshold strictly between 1lh and 2lh works; the
+   * midpoint maximizes tolerance on both sides. */
+  @container measure (height > 1.5lh) {
     [data-truncate-marker] {
       opacity: 1;
       transition: opacity var(--truncate-internal-marker-fade-in-duration)
@@ -1557,6 +1565,12 @@
     user-select: none;
     word-break: break-all;
     margin-top: calc(-1 * var(--truncate-internal-single-line-height));
+    /* A few px of slack so this hidden measuring copy doesn't wrap (and trip
+     * the marker) when the visible text is within a sub-character of fitting —
+     * e.g. a name that is fractions of a pixel too wide under one platform's
+     * font metrics but not another's. The copy is invisible and clipped, so
+     * the extra width has no visual effect. */
+    width: calc(100% + 2px);
   }
 
   [data-truncate-marker-cell] {

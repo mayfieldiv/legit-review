@@ -3,6 +3,7 @@
 import { Check, GitCommitHorizontal, Loader2, Search } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { PortalPopover } from './PortalPopover';
 import { Button } from '@/components/ui/button';
 import type { CommitSummary } from '@/lib/git';
 import { cn } from '@/lib/utils';
@@ -138,31 +139,6 @@ export function CommitSelect({
   const [query, setQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (
-        containerRef.current != null &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
-        setOpen(false);
-      }
-    };
-    const handleKeydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-      }
-    };
-    window.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('keydown', handleKeydown);
-    return () => {
-      window.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeydown);
-    };
-  }, [open]);
-
   const normalizedQuery = query.trim().toLowerCase();
   const filtered =
     normalizedQuery === ''
@@ -200,88 +176,88 @@ export function CommitSelect({
         )}
       </Button>
 
-      {open && (
-        <div
-          className={cn(
-            'bg-popover text-popover-foreground absolute z-50 mt-1 w-[24rem] max-w-[90vw] overflow-hidden rounded-md border shadow-lg',
-            align === 'end' ? 'right-0' : 'left-0'
-          )}
-        >
-          {label != null && (
-            <div className="text-muted-foreground border-b px-3 py-1.5 text-xs font-medium">
-              {label}
-            </div>
-          )}
-          <div className="border-b p-2">
-            <div className="relative">
-              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2" />
-              <input
-                autoFocus
-                className="border-input bg-background focus-visible:ring-ring/50 h-8 w-full rounded-md border pr-2 pl-7 font-mono text-xs focus-visible:ring-2 focus-visible:outline-none"
-                onChange={(event) => setQuery(event.currentTarget.value)}
-                placeholder="Filter by sha or message"
-                type="text"
-                value={query}
-              />
-            </div>
+      <PortalPopover
+        anchorRef={containerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        align={align}
+        width={384}
+        className="bg-popover text-popover-foreground z-[100] overflow-hidden rounded-md border shadow-lg"
+      >
+        {label != null && (
+          <div className="text-muted-foreground border-b px-3 py-1.5 text-xs font-medium">
+            {label}
           </div>
-
-          <div className="cv-mini-scrollbar max-h-72 overflow-y-auto overscroll-contain p-1">
-            {error != null ? (
-              <div className="text-destructive px-2 py-3 text-xs">{error}</div>
-            ) : filtered.length === 0 ? (
-              <div className="text-muted-foreground px-2 py-3 text-xs">
-                {loading ? 'Loading commits…' : 'No matching commits.'}
-              </div>
-            ) : (
-              filtered.map((commit) => (
-                <button
-                  key={commit.sha}
-                  type="button"
-                  className={cn(
-                    'hover:bg-accent hover:text-accent-foreground flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left',
-                    commit.sha === value?.sha &&
-                      'bg-accent text-accent-foreground'
-                  )}
-                  onClick={() => {
-                    onChange(commit);
-                    setOpen(false);
-                  }}
-                >
-                  <span className="mt-0.5 w-16 shrink-0 font-mono text-xs">
-                    {commit.shortSha}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm">
-                      {commit.subject}
-                    </span>
-                    <span className="text-muted-foreground block truncate text-xs">
-                      {commit.authorName}
-                      {commit.authorDate !== ''
-                        ? ` · ${formatCommitDate(commit.authorDate)}`
-                        : ''}
-                    </span>
-                  </span>
-                  {commit.sha === value?.sha && (
-                    <Check className="mt-0.5 size-3.5 shrink-0" />
-                  )}
-                </button>
-              ))
-            )}
-            {hasMore && error == null && (
-              <button
-                type="button"
-                className="text-muted-foreground hover:text-foreground flex w-full items-center justify-center gap-1.5 rounded-sm px-2 py-2 text-xs"
-                disabled={loading}
-                onClick={onLoadMore}
-              >
-                {loading && <Loader2 className="size-3.5 animate-spin" />}
-                Load more
-              </button>
-            )}
+        )}
+        <div className="border-b p-2">
+          <div className="relative">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2" />
+            <input
+              autoFocus
+              className="border-input bg-background focus-visible:ring-ring/50 h-8 w-full rounded-md border pr-2 pl-7 font-mono text-xs focus-visible:ring-2 focus-visible:outline-none"
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              placeholder="Filter by sha or message"
+              type="text"
+              value={query}
+            />
           </div>
         </div>
-      )}
+
+        <div className="cv-mini-scrollbar max-h-72 overflow-y-auto overscroll-contain p-1">
+          {error != null ? (
+            <div className="text-destructive px-2 py-3 text-xs">{error}</div>
+          ) : filtered.length === 0 ? (
+            <div className="text-muted-foreground px-2 py-3 text-xs">
+              {loading ? 'Loading commits…' : 'No matching commits.'}
+            </div>
+          ) : (
+            filtered.map((commit) => (
+              <button
+                key={commit.sha}
+                type="button"
+                className={cn(
+                  'hover:bg-accent hover:text-accent-foreground flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left',
+                  commit.sha === value?.sha &&
+                    'bg-accent text-accent-foreground'
+                )}
+                onClick={() => {
+                  onChange(commit);
+                  setOpen(false);
+                }}
+              >
+                <span className="mt-0.5 w-16 shrink-0 font-mono text-xs">
+                  {commit.shortSha}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">
+                    {commit.subject}
+                  </span>
+                  <span className="text-muted-foreground block truncate text-xs">
+                    {commit.authorName}
+                    {commit.authorDate !== ''
+                      ? ` · ${formatCommitDate(commit.authorDate)}`
+                      : ''}
+                  </span>
+                </span>
+                {commit.sha === value?.sha && (
+                  <Check className="mt-0.5 size-3.5 shrink-0" />
+                )}
+              </button>
+            ))
+          )}
+          {hasMore && error == null && (
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground flex w-full items-center justify-center gap-1.5 rounded-sm px-2 py-2 text-xs"
+              disabled={loading}
+              onClick={onLoadMore}
+            >
+              {loading && <Loader2 className="size-3.5 animate-spin" />}
+              Load more
+            </button>
+          )}
+        </div>
+      </PortalPopover>
     </div>
   );
 }

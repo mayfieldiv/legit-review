@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import { CommitSelect, useRepoCommits } from './CommitPicker';
+import { PortalPopover } from './PortalPopover';
 import {
   commitRangeReviewHref,
   singleCommitReviewHref,
@@ -66,31 +67,6 @@ export function ReviewScopeSwitcher({
     return () => controller.abort();
   }, [open, repo, scopes]);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (
-        containerRef.current != null &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
-        setOpen(false);
-      }
-    };
-    const handleKeydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-      }
-    };
-    window.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('keydown', handleKeydown);
-    return () => {
-      window.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeydown);
-    };
-  }, [open]);
-
   const navigate = (href: string) => {
     setOpen(false);
     router.push(href);
@@ -111,112 +87,114 @@ export function ReviewScopeSwitcher({
         <ChevronDown className="text-muted-foreground size-3 shrink-0" />
       </button>
 
-      {open && (
-        <div className="bg-popover text-popover-foreground absolute left-0 z-50 mt-1 w-[26rem] max-w-[92vw] space-y-3 rounded-md border p-3 font-sans shadow-lg">
-          <section className="space-y-1.5">
-            <h3 className="text-muted-foreground text-xs font-medium">
-              Working tree
-            </h3>
-            <div className="flex flex-wrap gap-1.5">
-              {workingTreeOptions.length === 0 ? (
-                <>
-                  <ScopeLink
-                    icon={<GitBranch className="size-3.5" />}
-                    label="Base"
-                    onClick={() => navigate(workingTreeReviewHref(repo))}
-                  />
-                  <ScopeLink
-                    icon={<PencilLine className="size-3.5" />}
-                    label="Uncommitted"
-                    onClick={() =>
-                      navigate(workingTreeReviewHref(repo, 'HEAD'))
-                    }
-                  />
-                </>
-              ) : (
-                workingTreeOptions.map((option) => (
-                  <ScopeLink
-                    key={option.id}
-                    disabled={!option.available}
-                    icon={<ScopeIcon id={option.id} />}
-                    label={option.shortLabel}
-                    title={
-                      option.available ? option.detail : option.disabledReason
-                    }
-                    onClick={() =>
-                      navigate(workingTreeReviewHref(repo, option.baseRef))
-                    }
-                  />
-                ))
-              )}
-            </div>
-          </section>
+      <PortalPopover
+        anchorRef={containerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        width={416}
+        className="bg-popover text-popover-foreground z-[100] space-y-3 rounded-md border p-3 font-sans shadow-lg"
+      >
+        <section className="space-y-1.5">
+          <h3 className="text-muted-foreground text-xs font-medium">
+            Working tree
+          </h3>
+          <div className="flex flex-wrap gap-1.5">
+            {workingTreeOptions.length === 0 ? (
+              <>
+                <ScopeLink
+                  icon={<GitBranch className="size-3.5" />}
+                  label="Base"
+                  onClick={() => navigate(workingTreeReviewHref(repo))}
+                />
+                <ScopeLink
+                  icon={<PencilLine className="size-3.5" />}
+                  label="Uncommitted"
+                  onClick={() => navigate(workingTreeReviewHref(repo, 'HEAD'))}
+                />
+              </>
+            ) : (
+              workingTreeOptions.map((option) => (
+                <ScopeLink
+                  key={option.id}
+                  disabled={!option.available}
+                  icon={<ScopeIcon id={option.id} />}
+                  label={option.shortLabel}
+                  title={
+                    option.available ? option.detail : option.disabledReason
+                  }
+                  onClick={() =>
+                    navigate(workingTreeReviewHref(repo, option.baseRef))
+                  }
+                />
+              ))
+            )}
+          </div>
+        </section>
 
-          <section className="space-y-1.5">
-            <h3 className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
-              <GitCommitHorizontal className="size-3.5" />
-              Single commit
-            </h3>
+        <section className="space-y-1.5">
+          <h3 className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
+            <GitCommitHorizontal className="size-3.5" />
+            Single commit
+          </h3>
+          <CommitSelect
+            commits={commitState.commits}
+            error={commitState.error}
+            hasMore={commitState.hasMore}
+            loading={commitState.loading}
+            onChange={(commit) =>
+              navigate(singleCommitReviewHref(repo, commit.sha))
+            }
+            onLoadMore={commitState.loadMore}
+            placeholder="Pick a commit to review"
+            value={null}
+          />
+        </section>
+
+        <section className="space-y-1.5">
+          <h3 className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
+            <GitCompare className="size-3.5" />
+            Commit range
+          </h3>
+          <div className="grid gap-2 sm:grid-cols-2">
             <CommitSelect
               commits={commitState.commits}
               error={commitState.error}
               hasMore={commitState.hasMore}
               loading={commitState.loading}
-              onChange={(commit) =>
-                navigate(singleCommitReviewHref(repo, commit.sha))
-              }
+              onChange={setRangeStart}
               onLoadMore={commitState.loadMore}
-              placeholder="Pick a commit to review"
-              value={null}
+              placeholder="Start (older)"
+              value={rangeStart}
             />
-          </section>
-
-          <section className="space-y-1.5">
-            <h3 className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
-              <GitCompare className="size-3.5" />
-              Commit range
-            </h3>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <CommitSelect
-                commits={commitState.commits}
-                error={commitState.error}
-                hasMore={commitState.hasMore}
-                loading={commitState.loading}
-                onChange={setRangeStart}
-                onLoadMore={commitState.loadMore}
-                placeholder="Start (older)"
-                value={rangeStart}
-              />
-              <CommitSelect
-                align="end"
-                commits={commitState.commits}
-                error={commitState.error}
-                hasMore={commitState.hasMore}
-                loading={commitState.loading}
-                onChange={setRangeEnd}
-                onLoadMore={commitState.loadMore}
-                placeholder="End (newer)"
-                value={rangeEnd}
-              />
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              className="w-full"
-              disabled={rangeStart == null || rangeEnd == null}
-              onClick={() => {
-                if (rangeStart != null && rangeEnd != null) {
-                  navigate(
-                    commitRangeReviewHref(repo, rangeStart.sha, rangeEnd.sha)
-                  );
-                }
-              }}
-            >
-              Review range
-            </Button>
-          </section>
-        </div>
-      )}
+            <CommitSelect
+              align="end"
+              commits={commitState.commits}
+              error={commitState.error}
+              hasMore={commitState.hasMore}
+              loading={commitState.loading}
+              onChange={setRangeEnd}
+              onLoadMore={commitState.loadMore}
+              placeholder="End (newer)"
+              value={rangeEnd}
+            />
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            className="w-full"
+            disabled={rangeStart == null || rangeEnd == null}
+            onClick={() => {
+              if (rangeStart != null && rangeEnd != null) {
+                navigate(
+                  commitRangeReviewHref(repo, rangeStart.sha, rangeEnd.sha)
+                );
+              }
+            }}
+          >
+            Review range
+          </Button>
+        </section>
+      </PortalPopover>
     </div>
   );
 }

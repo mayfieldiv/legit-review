@@ -215,6 +215,8 @@ export function CommitSelect({
               <button
                 key={commit.sha}
                 type="button"
+                // Truncated rows: surface the full message on hover.
+                title={`${commit.shortSha} ${commit.subject}`}
                 className={cn(
                   'hover:bg-accent hover:text-accent-foreground flex w-full flex-col gap-0.5 rounded-sm px-2.5 py-2 text-left',
                   commit.sha === value?.sha &&

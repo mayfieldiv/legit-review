@@ -136,10 +136,19 @@ export const CodeViewHeader = memo(function CodeViewHeader({
       >
         <DiffsHubLogo />
       </Link>
+      {/* Order: path, then the prev/next arrows, then the scope label. The
+          scope label is variable-width and changes on every commit nav, so it
+          sits last — keeping the arrows in a fixed spot instead of being
+          shoved around each click. */}
       <div className="hidden min-w-0 items-center gap-2 font-mono text-xs md:mr-auto md:flex">
         {sourceInfo != null && (
           <>
-            <ReviewScopeSwitcher repo={repo} sourceInfo={sourceInfo} />
+            <span
+              className="text-muted-foreground hidden min-w-0 shrink truncate lg:inline"
+              title={sourceInfo.repoPath}
+            >
+              {sourceInfo.repoPath}
+            </span>
             {sourceInfo.mode === 'single' && (
               <CommitNavButtons
                 nextSha={sourceInfo.nextSha ?? null}
@@ -147,12 +156,7 @@ export const CodeViewHeader = memo(function CodeViewHeader({
                 repo={repo}
               />
             )}
-            <span
-              className="text-muted-foreground hidden truncate lg:inline"
-              title={sourceInfo.repoPath}
-            >
-              {sourceInfo.repoPath}
-            </span>
+            <ReviewScopeSwitcher repo={repo} sourceInfo={sourceInfo} />
           </>
         )}
       </div>
@@ -320,7 +324,7 @@ function CommitNavButtons({
   repo: string;
 }) {
   return (
-    <span className="flex items-center">
+    <span className="flex shrink-0 items-center">
       <CommitNavButton direction="prev" repo={repo} sha={prevSha} />
       <CommitNavButton direction="next" repo={repo} sha={nextSha} />
     </span>

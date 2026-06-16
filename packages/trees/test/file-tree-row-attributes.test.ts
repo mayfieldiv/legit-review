@@ -78,6 +78,17 @@ describe('computeFileTreeRowElementAttributes', () => {
     expect(attrs['data-file-tree-sticky-path']).toBeUndefined();
   });
 
+  test('exposes the full untruncated name as a hover title in both flow and sticky modes', () => {
+    const flow = computeFileTreeRowElementAttributes(makeInput());
+    const sticky = computeFileTreeRowElementAttributes(
+      makeInput({ mode: 'sticky' })
+    );
+    expect(flow.title).toBe('lib folder');
+    // Sticky (pinned) rows clip just like flow rows, so they keep the tooltip
+    // even though they shed treeitem a11y semantics.
+    expect(sticky.title).toBe('lib folder');
+  });
+
   test('sticky rows strip treeitem semantics so the aria-hidden mirror stays invisible to AT', () => {
     const attrs = computeFileTreeRowElementAttributes(
       makeInput({ mode: 'sticky' })

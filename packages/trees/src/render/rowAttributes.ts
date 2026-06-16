@@ -120,6 +120,12 @@ export function computeFileTreeRowElementAttributes(
     role: !isSticky ? 'treeitem' : undefined,
     style: { minHeight: `${itemHeight}px`, ...extraStyle },
     tabIndex: !isSticky && row.isFocused ? 0 : -1,
+    // Native hover tooltip with the full, untruncated name (joined segments for
+    // flattened rows) so clipped names stay readable. Truncation is detected in
+    // CSS, not JS, so we can't gate the title on whether a given row actually
+    // clipped; an always-present title matches how file trees (VS Code, GitHub)
+    // behave and is harmless when the name already fits.
+    title: ariaLabel,
     ...stateAttributes,
   };
 }

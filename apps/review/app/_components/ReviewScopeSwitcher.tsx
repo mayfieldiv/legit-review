@@ -91,7 +91,7 @@ export function ReviewScopeSwitcher({
         anchorRef={containerRef}
         open={open}
         onClose={() => setOpen(false)}
-        width={416}
+        width={480}
         className="bg-popover text-popover-foreground z-[100] space-y-3 rounded-md border p-3 font-sans shadow-lg"
       >
         <section className="space-y-1.5">

@@ -181,7 +181,7 @@ export function CommitSelect({
         open={open}
         onClose={() => setOpen(false)}
         align={align}
-        width={384}
+        width={480}
         className="bg-popover text-popover-foreground z-[100] overflow-hidden rounded-md border shadow-lg"
       >
         {label != null && (
@@ -216,7 +216,7 @@ export function CommitSelect({
                 key={commit.sha}
                 type="button"
                 className={cn(
-                  'hover:bg-accent hover:text-accent-foreground flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left',
+                  'hover:bg-accent hover:text-accent-foreground flex w-full flex-col gap-0.5 rounded-sm px-2.5 py-2 text-left',
                   commit.sha === value?.sha &&
                     'bg-accent text-accent-foreground'
                 )}
@@ -225,23 +225,35 @@ export function CommitSelect({
                   setOpen(false);
                 }}
               >
-                <span className="mt-0.5 w-16 shrink-0 font-mono text-xs">
-                  {commit.shortSha}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">
+                <span className="flex w-full items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-sm">
                     {commit.subject}
                   </span>
-                  <span className="text-muted-foreground block truncate text-xs">
-                    {commit.authorName}
-                    {commit.authorDate !== ''
-                      ? ` · ${formatCommitDate(commit.authorDate)}`
-                      : ''}
-                  </span>
+                  {commit.sha === value?.sha && (
+                    <Check className="size-3.5 shrink-0" />
+                  )}
                 </span>
-                {commit.sha === value?.sha && (
-                  <Check className="mt-0.5 size-3.5 shrink-0" />
-                )}
+                <span className="text-muted-foreground flex w-full items-center gap-1.5 text-xs">
+                  <span className="font-mono">{commit.shortSha}</span>
+                  {commit.authorName !== '' && (
+                    <>
+                      <span aria-hidden className="opacity-50">
+                        ·
+                      </span>
+                      <span className="truncate">{commit.authorName}</span>
+                    </>
+                  )}
+                  {commit.authorDate !== '' && (
+                    <>
+                      <span aria-hidden className="opacity-50">
+                        ·
+                      </span>
+                      <span className="shrink-0">
+                        {formatCommitDate(commit.authorDate)}
+                      </span>
+                    </>
+                  )}
+                </span>
               </button>
             ))
           )}

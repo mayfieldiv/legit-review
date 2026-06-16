@@ -63,12 +63,15 @@ export interface RangeDiffSource {
 export type ReviewDiffSource = LocalDiffSource | RangeDiffSource;
 
 // Newest-first commit on a branch as the picker and navigation consume it.
+// `body` is the message after the subject line (empty when there is none); the
+// picker shows it in each row's hover tooltip.
 export interface CommitSummary {
   sha: string;
   shortSha: string;
   subject: string;
   authorName: string;
   authorDate: string;
+  body: string;
 }
 
 // Adjacent commits along HEAD's first-parent history, used by single-commit
@@ -814,14 +817,15 @@ export async function listRepoCommits(
     return { commits: [], hasMore: false };
   }
 
-  // NUL between fields, newline between records — subjects (%s) never contain a
-  // newline, so records stay unambiguous.
+  // Records are NUL-terminated (-z) and fields unit-separated (US, 0x1f), so
+  // the last field — the body (%b) — can hold newlines without ambiguity.
   const result = await runGit(repoPath, [
     'log',
     '--no-color',
+    '-z',
     `--max-count=${limit}`,
     `--skip=${skip}`,
-    '--pretty=format:%H%x00%h%x00%an%x00%aI%x00%s',
+    '--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b',
     'HEAD',
   ]);
   if (result.code !== 0) {
@@ -832,11 +836,12 @@ export async function listRepoCommits(
 
   const text = result.stdout.toString('utf8');
   const commits: CommitSummary[] = [];
-  for (const line of text.split('\n')) {
-    if (line === '') {
+  for (const record of text.split('\0')) {
+    if (record === '') {
       continue;
     }
-    const [sha, shortSha, authorName, authorDate, subject] = line.split('\0');
+    const [sha, shortSha, authorName, authorDate, subject, body] =
+      record.split('\x1f');
     if (sha == null) {
       continue;
     }
@@ -846,6 +851,7 @@ export async function listRepoCommits(
       subject: subject ?? '',
       authorName: authorName ?? '',
       authorDate: authorDate ?? '',
+      body: (body ?? '').trim(),
     });
   }
   return { commits, hasMore: commits.length === limit };

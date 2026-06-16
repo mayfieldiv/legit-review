@@ -52,7 +52,15 @@ beforeAll(async () => {
 
   await writeFile(path.join(repo, 'a.txt'), 'one\ntwo\nthree\n');
   git(repo, 'add', '-A');
-  git(repo, 'commit', '-qm', 'c3 third line');
+  // A body (second -m) so listRepoCommits' multi-line body parsing is covered.
+  git(
+    repo,
+    'commit',
+    '-qm',
+    'c3 third line',
+    '-m',
+    'Body line one.\nBody line two.'
+  );
   c3 = git(repo, 'rev-parse', 'HEAD');
 
   // An untracked file must never leak into a range diff (no working-tree read).
@@ -163,10 +171,14 @@ describe('resolveCommitNeighbors', () => {
 });
 
 describe('listRepoCommits', () => {
-  test('lists commits newest-first', async () => {
+  test('lists commits newest-first with subject and body', async () => {
     const { commits, hasMore } = await listRepoCommits(repo);
     expect(commits.map((commit) => commit.sha)).toEqual([c3, c2, c1]);
     expect(commits[0].subject).toBe('c3 third line');
+    expect(commits[0].body).toBe('Body line one.\nBody line two.');
+    // A commit with no body reports an empty string, not the next record.
+    expect(commits[1].subject).toBe('c2 add b');
+    expect(commits[1].body).toBe('');
     expect(hasMore).toBe(false);
   });
 

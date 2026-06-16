@@ -215,8 +215,9 @@ export function CommitSelect({
               <button
                 key={commit.sha}
                 type="button"
-                // Truncated rows: surface the full message on hover.
-                title={`${commit.shortSha} ${commit.subject}`}
+                // Truncated rows: surface the full message (subject + body) on
+                // hover.
+                title={commitTooltip(commit)}
                 className={cn(
                   'hover:bg-accent hover:text-accent-foreground flex w-full flex-col gap-0.5 rounded-sm px-2.5 py-2 text-left',
                   commit.sha === value?.sha &&
@@ -274,6 +275,13 @@ export function CommitSelect({
       </PortalPopover>
     </div>
   );
+}
+
+// Hover tooltip for a row: short sha + full subject, then the body when the
+// commit has one, so a truncated row reveals the whole message.
+function commitTooltip(commit: CommitSummary): string {
+  const heading = `${commit.shortSha} ${commit.subject}`;
+  return commit.body !== '' ? `${heading}\n\n${commit.body}` : heading;
 }
 
 function formatCommitDate(value: string): string {

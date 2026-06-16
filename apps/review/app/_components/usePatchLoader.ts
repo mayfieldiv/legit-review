@@ -65,6 +65,7 @@ import {
   computeHunkViewedState,
   getFileContentsLine,
   isDraftAnnotation,
+  selectCommentContextPathsToFetch,
 } from './utils';
 import {
   type FileHunkHashes,
@@ -272,10 +273,11 @@ export function usePatchLoader({
   // annotations, per-hunk Viewed pills, sidebar sections, and viewed-driven
   // collapse. Server state replaces all synthetic annotations while open
   // drafts are preserved, so this is idempotent and doubles as the refresh
-  // path when an agent mutates comments or the diff is reloaded. Comments on
-  // files outside the diff mount compact context-only diff items (contents
-  // fetched on demand); only files unreadable as text fall back to an orphan
-  // sidebar section with no annotation.
+  // path when an agent mutates comments or the diff is reloaded. Open comments
+  // on files outside the diff mount compact context-only diff items (contents
+  // fetched on demand); files whose comments are all resolved, or that are
+  // unreadable as text, stay sidebar-only with no annotation so resolving a
+  // comment never leaves an otherwise-unchanged file in the diff view.
   const applyServerState = useStableCallback(
     (state: ReviewStateResponse): void => {
       const comments: readonly ReviewStateComment[] = state.comments;
@@ -298,9 +300,15 @@ export function usePatchLoader({
         string,
         LineAnnotation<CommentMetadata>[]
       >();
-      // Commented files with no item yet: contents are fetched async and this
-      // whole projection re-runs once their context-only items exist.
-      const pathsNeedingContents = new Set<string>();
+      // Out-of-diff files with an open comment have their contents fetched
+      // async and mounted as context-only items; this whole projection re-runs
+      // once those items exist. Resolved-only files are excluded so they never
+      // appear in the diff view just to host resolved threads.
+      const pathsNeedingContents = selectCommentContextPathsToFetch(
+        comments,
+        (path) => itemsByPath.has(path),
+        (path) => extraFileContentsByPathRef.current.has(path)
+      );
       const sectionsByPath = new Map<string, CodeViewSavedCommentItem>();
       const sortedComments = [...comments].sort(
         (a, b) => a.range.end - b.range.end
@@ -319,9 +327,6 @@ export function usePatchLoader({
           const ranges = extraCommentRangesByPath.get(comment.filePath) ?? [];
           ranges.push(comment.range);
           extraCommentRangesByPath.set(comment.filePath, ranges);
-        }
-        if (item == null && extraContents === undefined) {
-          pathsNeedingContents.add(comment.filePath);
         }
         // A hunk-anchored comment is outdated when its hunk's content hash no
         // longer exists in the current diff. Out-of-diff comments (no hunk

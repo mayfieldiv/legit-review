@@ -197,6 +197,31 @@ function stripLineEnding(line: string): string {
   return line.endsWith('\n') || line.endsWith('\r') ? line.slice(0, -1) : line;
 }
 
+// Decides which commented files outside the current diff must have their
+// working-tree contents fetched so the comment can render with surrounding
+// code as a compact context-only item. Only open (unresolved) comments
+// qualify: a file whose comments are all resolved stays sidebar-only and never
+// gets pulled into the diff view just to host resolved threads. Files already
+// loaded as an item, or already fetched (including unreadable paths cached as a
+// miss), are skipped so the projection stays idempotent and never refetches.
+export function selectCommentContextPathsToFetch(
+  comments: readonly { filePath: string; resolved: boolean }[],
+  isPathLoaded: (path: string) => boolean,
+  isPathFetched: (path: string) => boolean
+): Set<string> {
+  const paths = new Set<string>();
+  for (const comment of comments) {
+    if (comment.resolved) {
+      continue;
+    }
+    if (isPathLoaded(comment.filePath) || isPathFetched(comment.filePath)) {
+      continue;
+    }
+    paths.add(comment.filePath);
+  }
+  return paths;
+}
+
 export function upsertSavedCommentSidebarEntry(
   sections: readonly CodeViewSavedCommentItem[],
   commentFileByItemId: CodeViewCommentFileByItemId | null,

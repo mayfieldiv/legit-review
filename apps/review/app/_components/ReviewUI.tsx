@@ -19,6 +19,7 @@ import { CodeViewHeader } from './CodeViewHeader';
 import { CodeViewSidebar } from './CodeViewSidebar';
 import { CodeViewStatusPanel } from './CodeViewStatusPanel';
 import { CodeViewWrapper } from './CodeViewWrapper';
+import { DiffFindBar } from './DiffFindBar';
 import { singleCommitReviewHref } from './reviewLinks';
 import type { DarkThemeName, LightThemeName } from './themeNames';
 import type {
@@ -31,6 +32,7 @@ import type {
   ReviewStateResponse,
   SavedCommentMetadata,
 } from './types';
+import { useDiffFind } from './useDiffFind';
 import { usePatchLoader } from './usePatchLoader';
 import { useThemeCycle } from './useThemeCycle';
 import {
@@ -144,6 +146,7 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
     errorMessage,
     getFileHunkHashes,
     getHunkViewedState,
+    getOrderedItems,
     initialItems,
     isFileViewed,
     loadState,
@@ -164,6 +167,15 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
     onLoadStart: handlePatchLoadStart,
     repo,
     viewerRef,
+  });
+
+  // In-app find (Cmd/Ctrl-F). Searches the loaded model so it reaches matches
+  // the native browser find misses inside virtualized or collapsed files.
+  const find = useDiffFind({
+    viewerRef,
+    scrollRef,
+    getOrderedItems,
+    revision: viewerKey,
   });
 
   // A commit-scope review (single commit or range) diffs immutable SHAs, so
@@ -721,6 +733,7 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
             onViewerReady={onViewerReady}
             persistComment={persistComment}
           />
+          <DiffFindBar find={find} />
         </>
       ) : (
         <CodeViewStatusPanel

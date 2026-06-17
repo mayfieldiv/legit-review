@@ -107,6 +107,7 @@ interface UsePatchLoaderResult {
     itemId: string,
     hunkIndex: number
   ): HunkViewedState | undefined;
+  getOrderedItems(): readonly CodeViewItem<CommentMetadata>[];
   initialItems: CodeViewItem<CommentMetadata>[];
   isFileViewed(itemId: string): boolean;
   loadState: ViewerLoadState;
@@ -1223,6 +1224,14 @@ export function usePatchLoader({
     setLoadAttempt((attempt) => attempt + 1);
   }, []);
 
+  // Every loaded item in display order, including collapsed and not-yet-rendered
+  // ones. In-app find searches this rather than the DOM so it can reach content
+  // the browser's native Cmd-F can't.
+  const getOrderedItems = useStableCallback(
+    (): readonly CodeViewItem<CommentMetadata>[] =>
+      Array.from(loadedItemsByIdRef.current.values())
+  );
+
   return {
     applyCollapseModeToLoaded,
     applyViewedMarks,
@@ -1232,6 +1241,7 @@ export function usePatchLoader({
     errorMessage,
     getFileHunkHashes,
     getHunkViewedState,
+    getOrderedItems,
     initialItems,
     isFileViewed,
     loadState,

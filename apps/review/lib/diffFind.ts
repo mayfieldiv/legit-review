@@ -13,16 +13,15 @@ export interface FindOptions {
 // A single match, located in the model. `side` mirrors the diff's
 // additions/deletions columns so the viewer's `scrollTo({type:'line'})` can
 // resolve it to the correct rendered row; it is omitted for plain-file items.
-// `withinItemIndex` is the match's ordinal within its own item (document
-// order), used to pinpoint the active occurrence in the DOM after scrolling.
+// (itemId, side, lineNumber, columnStart) together locate the match's exact
+// occurrence in the rendered DOM. The list order is document order, so a
+// match's ordinal is just its index.
 export interface FindMatch {
   itemId: string;
   side?: SelectionSide;
   lineNumber: number;
   columnStart: number;
   length: number;
-  globalIndex: number;
-  withinItemIndex: number;
 }
 
 // One enumerated line of an item, paired with the (lineNumber, side) address
@@ -146,9 +145,7 @@ export function findMatches<T>(
   if (query === '') {
     return out;
   }
-  let globalIndex = 0;
   for (const item of items) {
-    let withinItemIndex = 0;
     for (const line of enumerateItemLines(item)) {
       for (const m of matchLine(line.text, query, options)) {
         out.push({
@@ -157,11 +154,7 @@ export function findMatches<T>(
           lineNumber: line.lineNumber,
           columnStart: m.columnStart,
           length: m.length,
-          globalIndex,
-          withinItemIndex,
         });
-        globalIndex++;
-        withinItemIndex++;
       }
     }
   }

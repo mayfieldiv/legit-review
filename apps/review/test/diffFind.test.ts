@@ -99,8 +99,6 @@ describe('findMatches diff enumeration', () => {
       { side: 'additions', lineNumber: 3 },
       { side: 'additions', lineNumber: 4 },
     ]);
-    expect(matches.map((m) => m.globalIndex)).toEqual([0, 1, 2, 3, 4]);
-    expect(matches.map((m) => m.withinItemIndex)).toEqual([0, 1, 2, 3, 4]);
   });
 });
 
@@ -123,12 +121,18 @@ new file mode 100644
 describe('findMatches across files', () => {
   const items = buildCodeViewData(MULTI_FILE_PATCH, 'multi').items;
 
-  test('orders by file then position, resetting withinItemIndex per item', () => {
+  test('orders by file then position within each item', () => {
     const matches = findMatches(items, 'target', DEFAULT);
     // a.ts: deletion l1, addition l1, context l2 ; b.ts: addition l1.
     expect(matches).toHaveLength(4);
-    expect(matches.map((m) => m.globalIndex)).toEqual([0, 1, 2, 3]);
-    expect(matches.map((m) => m.withinItemIndex)).toEqual([0, 1, 2, 0]);
+    expect(
+      matches.map((m) => ({ side: m.side, lineNumber: m.lineNumber }))
+    ).toEqual([
+      { side: 'deletions', lineNumber: 1 },
+      { side: 'additions', lineNumber: 1 },
+      { side: 'additions', lineNumber: 2 },
+      { side: 'additions', lineNumber: 1 },
+    ]);
     // First three share the same item (a.ts); the last belongs to b.ts.
     const firstItemId = matches[0].itemId;
     expect(matches[1].itemId).toBe(firstItemId);

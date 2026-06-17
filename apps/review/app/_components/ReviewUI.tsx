@@ -169,6 +169,18 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
     viewerRef,
   });
 
+  // Withhold the viewer until the persisted themes have been read from
+  // localStorage. Otherwise on client-side navigation back into a diff the
+  // CodeView would mount during the brief render where lightThemeName/darkThemeName
+  // are still at their `DEFAULT_*_THEME` initial values and tokenize the
+  // first batch of files against the wrong palette.
+  const viewerAvailable =
+    isWorkerPoolReadyOrDisable &&
+    themesHydrated &&
+    (loadState === 'ready' ||
+      (loadState === 'streaming' && initialItems.length > 0));
+  const diffShown = viewerAvailable && treeSource != null;
+
   // In-app find (Cmd/Ctrl-F). Searches the loaded model so it reaches matches
   // the native browser find misses inside virtualized or collapsed files.
   const find = useDiffFind({
@@ -176,6 +188,7 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
     scrollRef,
     getOrderedItems,
     revision: viewerKey,
+    enabled: diffShown,
   });
 
   // A commit-scope review (single commit or range) diffs immutable SHAs, so
@@ -651,17 +664,6 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
     },
     []
   );
-  // Withhold the viewer until the persisted themes have been read from
-  // localStorage. Otherwise on client-side navigation back into a diff the
-  // CodeView would mount during the brief render where lightThemeName/darkThemeName
-  // are still at their `DEFAULT_*_THEME` initial values and tokenize the
-  // first batch of files against the wrong palette.
-  const viewerAvailable =
-    isWorkerPoolReadyOrDisable &&
-    themesHydrated &&
-    (loadState === 'ready' ||
-      (loadState === 'streaming' && initialItems.length > 0));
-
   return (
     <ReviewGrid>
       <CodeViewHeader
@@ -690,7 +692,7 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
         setShowBackgrounds={setShowBackgrounds}
         showBackgrounds={showBackgrounds}
       />
-      {viewerAvailable && treeSource != null ? (
+      {diffShown ? (
         <>
           <CodeViewSidebar
             className="[grid-area:viewer] md:[grid-area:tree]"

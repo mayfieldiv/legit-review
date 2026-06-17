@@ -24,6 +24,9 @@ interface UseDiffFindParams {
   // Bumped whenever the viewer remounts (e.g. a live diff reload) so stale
   // matches against old item ids are recomputed.
   revision: unknown;
+  // Whether the diff is currently shown. When false (error/empty/status panel)
+  // the Cmd-F chord is left to the browser instead of opening an empty find.
+  enabled: boolean;
 }
 
 export interface DiffFind {
@@ -44,11 +47,24 @@ export interface DiffFind {
 
 const DEFAULT_OPTIONS: FindOptions = { caseSensitive: false, wholeWord: false };
 
+// A focused text field where the native Cmd-F (or typing) should win.
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.isContentEditable
+  );
+}
+
 export function useDiffFind({
   viewerRef,
   scrollRef,
   getOrderedItems,
   revision,
+  enabled,
 }: UseDiffFindParams): DiffFind {
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState('');
@@ -63,10 +79,14 @@ export function useDiffFind({
   const queryRef = useRef(query);
   const optionsRef = useRef(options);
   const activeIndexRef = useRef(activeIndex);
+  const openRef = useRef(open);
+  const enabledRef = useRef(enabled);
   const rafRef = useRef<number | null>(null);
   queryRef.current = query;
   optionsRef.current = options;
   activeIndexRef.current = activeIndex;
+  openRef.current = open;
+  enabledRef.current = enabled;
 
   // Repaint both highlights from current state. The all-matches tint comes from
   // visible DOM text; the active match (matches[activeIndex]) is located in the
@@ -244,17 +264,24 @@ export function useDiffFind({
 
   // Cmd/Ctrl-F opens find and steals the chord from the browser's native find,
   // which can't see virtualized or collapsed content. Capture phase so we win
-  // the event regardless of focus.
+  // the event regardless of focus. We yield the chord back to the browser when
+  // the diff isn't shown, or when the user is typing in another field (a
+  // comment box) and find isn't already open — a second Cmd-F while find is
+  // open still re-focuses its input.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (
+      const isFindChord =
         (event.metaKey || event.ctrlKey) &&
         !event.altKey &&
-        (event.key === 'f' || event.key === 'F')
-      ) {
-        event.preventDefault();
-        openFind();
+        (event.key === 'f' || event.key === 'F');
+      if (!isFindChord || !enabledRef.current) {
+        return;
       }
+      if (!openRef.current && isEditableTarget(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      openFind();
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);

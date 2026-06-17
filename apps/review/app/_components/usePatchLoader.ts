@@ -1226,10 +1226,12 @@ export function usePatchLoader({
 
   // Every loaded item in display order, including collapsed and not-yet-rendered
   // ones. In-app find searches this rather than the DOM so it can reach content
-  // the browser's native Cmd-F can't.
+  // the browser's native Cmd-F can't. This returns `initialItems` (the same
+  // ordered array the viewer renders) rather than the lookup map's values: the
+  // map's iteration order can diverge from display order, e.g. a streamed rename
+  // deletes and re-adds an entry, moving it to the end.
   const getOrderedItems = useStableCallback(
-    (): readonly CodeViewItem<CommentMetadata>[] =>
-      Array.from(loadedItemsByIdRef.current.values())
+    (): readonly CodeViewItem<CommentMetadata>[] => initialItems
   );
 
   return {

@@ -24,6 +24,67 @@ export interface FindMatch {
   length: number;
 }
 
+// A document position the user is looking at, used to keep find anchored to the
+// same area as the query is refined. Stored as (itemId, lineNumber) rather than
+// a scroll offset so it survives live-reload reorders: the item is re-resolved
+// to its current display index at compare time.
+export interface FindAnchor {
+  itemId: string;
+  lineNumber: number;
+}
+
+// Among matches (already in document order), picks the index of the one nearest
+// the anchor. Distance is measured in document order: fewer items away wins,
+// then fewer lines away within that gap. On an exact tie (a match equally far
+// before and after the anchor) the match at or after the anchor is preferred,
+// matching the forward reading direction. `orderIndexById` maps an item id to
+// its position in the displayed order, or a negative value if the item has
+// dropped out (e.g. after a live reload); such matches are skipped. Returns 0
+// when there is no resolvable anchor, preserving the original "reveal the first
+// match" behavior as a fallback.
+export function findClosestMatchIndex(
+  matches: readonly FindMatch[],
+  anchor: FindAnchor | null,
+  orderIndexById: (itemId: string) => number
+): number {
+  if (matches.length === 0 || anchor == null) {
+    return 0;
+  }
+  const anchorIndex = orderIndexById(anchor.itemId);
+  if (anchorIndex < 0) {
+    return 0;
+  }
+  let best = -1;
+  let bestItemDist = Infinity;
+  let bestLineDist = Infinity;
+  let bestForward = false;
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i];
+    const itemIndex = orderIndexById(match.itemId);
+    if (itemIndex < 0) {
+      continue;
+    }
+    const itemDist = Math.abs(itemIndex - anchorIndex);
+    const lineDist = Math.abs(match.lineNumber - anchor.lineNumber);
+    const forward =
+      itemIndex > anchorIndex ||
+      (itemIndex === anchorIndex && match.lineNumber >= anchor.lineNumber);
+    const better =
+      best === -1 ||
+      itemDist < bestItemDist ||
+      (itemDist === bestItemDist &&
+        (lineDist < bestLineDist ||
+          (lineDist === bestLineDist && forward && !bestForward)));
+    if (better) {
+      best = i;
+      bestItemDist = itemDist;
+      bestLineDist = lineDist;
+      bestForward = forward;
+    }
+  }
+  return best === -1 ? 0 : best;
+}
+
 // One enumerated line of an item, paired with the (lineNumber, side) address
 // the viewer uses to scroll to it.
 interface EnumeratedLine {

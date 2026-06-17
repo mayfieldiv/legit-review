@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
 import { buildCodeViewData } from '../app/_components/codeViewDataAccumulator';
-import { findMatches, matchLine } from '../lib/diffFind';
+import {
+  findClosestMatchIndex,
+  type FindMatch,
+  findMatches,
+  matchLine,
+} from '../lib/diffFind';
 
 const DEFAULT = { caseSensitive: false, wholeWord: false };
 
@@ -99,6 +104,70 @@ describe('findMatches diff enumeration', () => {
       { side: 'additions', lineNumber: 3 },
       { side: 'additions', lineNumber: 4 },
     ]);
+  });
+});
+
+describe('findClosestMatchIndex', () => {
+  // Synthetic matches across three items (a, b, c) at known line numbers, in
+  // document order. Only itemId + lineNumber matter to the ranking.
+  const match = (itemId: string, lineNumber: number): FindMatch => ({
+    itemId,
+    lineNumber,
+    columnStart: 0,
+    length: 1,
+  });
+  const ORDER = new Map([
+    ['a', 0],
+    ['b', 1],
+    ['c', 2],
+  ]);
+  const orderIndex = (id: string) => ORDER.get(id) ?? -1;
+
+  test('returns 0 when there is no anchor', () => {
+    const matches = [match('b', 10), match('a', 5)];
+    expect(findClosestMatchIndex(matches, null, orderIndex)).toBe(0);
+  });
+
+  test('returns 0 when the anchor item has dropped out', () => {
+    const matches = [match('a', 5), match('b', 10)];
+    const anchor = { itemId: 'gone', lineNumber: 5 };
+    expect(findClosestMatchIndex(matches, anchor, orderIndex)).toBe(0);
+  });
+
+  test('picks the nearest line within the same item', () => {
+    const matches = [match('a', 5), match('a', 40), match('a', 80)];
+    const anchor = { itemId: 'a', lineNumber: 45 };
+    expect(findClosestMatchIndex(matches, anchor, orderIndex)).toBe(1);
+  });
+
+  test('prefers the same item over an adjacent item', () => {
+    // The anchor is in item b; the b match is 500 lines away but the a match is
+    // a closer line number in a different item. Same-item wins by document
+    // order (fewer items away).
+    const matches = [match('a', 10), match('b', 600)];
+    const anchor = { itemId: 'b', lineNumber: 100 };
+    expect(findClosestMatchIndex(matches, anchor, orderIndex)).toBe(1);
+  });
+
+  test('across items, the nearest item index wins', () => {
+    const matches = [match('a', 999), match('c', 1)];
+    const anchor = { itemId: 'b', lineNumber: 50 };
+    // Both items are one away from b; line distance breaks the tie toward c.
+    expect(findClosestMatchIndex(matches, anchor, orderIndex)).toBe(1);
+  });
+
+  test('exact tie prefers the match at or after the anchor', () => {
+    // Same item, anchor at line 100, matches equidistant before (90) and after
+    // (110). The forward one is chosen.
+    const matches = [match('a', 90), match('a', 110)];
+    const anchor = { itemId: 'a', lineNumber: 100 };
+    expect(findClosestMatchIndex(matches, anchor, orderIndex)).toBe(1);
+  });
+
+  test('skips matches whose item has dropped out', () => {
+    const matches = [match('gone', 100), match('a', 7)];
+    const anchor = { itemId: 'a', lineNumber: 8 };
+    expect(findClosestMatchIndex(matches, anchor, orderIndex)).toBe(1);
   });
 });
 

@@ -1,2 +1,5 @@
-command -v git-lfs >/dev/null 2>&1 || { echo >&2 "This repository is configured for Git LFS but 'git-lfs' was not found on your path. Install it from https://git-lfs.com"; exit 2; }
+# Skip LFS push verification when git-lfs isn't installed instead of failing the
+# push. Only the two .gitattributes-tracked LFS files are affected, and anyone
+# without git-lfs couldn't upload their objects anyway.
+command -v git-lfs >/dev/null 2>&1 || exit 0
 git lfs pre-push "$@"

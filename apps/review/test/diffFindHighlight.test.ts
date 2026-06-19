@@ -2,15 +2,36 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { JSDOM } from 'jsdom';
 
 import type { FindMatch } from '../lib/diffFind';
-import { collectLineRanges, locateActiveRange } from '../lib/diffFindHighlight';
+import {
+  collectLineRanges,
+  locateActiveRange,
+  repaintFind,
+} from '../lib/diffFindHighlight';
 
 const DEFAULT = { caseSensitive: false, wholeWord: false };
+
+// Minimal CSS Custom Highlight API stand-in: JSDOM has no `CSS.highlights`, so
+// repaintFind would no-op without it. A Map plus a Highlight that just records
+// its ranges is enough to exercise the paint/clear bookkeeping and the
+// active-painted return value.
+const highlightRegistry = new Map<string, unknown>();
+class FakeHighlight {
+  ranges: unknown[];
+  priority = 0;
+  constructor(...ranges: unknown[]) {
+    this.ranges = ranges;
+  }
+}
+const fakeCSS = { highlights: highlightRegistry };
 
 const originalGlobals = {
   document: Reflect.get(globalThis, 'document'),
   NodeFilter: Reflect.get(globalThis, 'NodeFilter'),
   Node: Reflect.get(globalThis, 'Node'),
+  ShadowRoot: Reflect.get(globalThis, 'ShadowRoot'),
   window: Reflect.get(globalThis, 'window'),
+  CSS: Reflect.get(globalThis, 'CSS'),
+  Highlight: Reflect.get(globalThis, 'Highlight'),
 };
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
@@ -22,7 +43,10 @@ beforeAll(() => {
     document: dom.window.document,
     NodeFilter: dom.window.NodeFilter,
     Node: dom.window.Node,
+    ShadowRoot: dom.window.ShadowRoot,
     window: dom.window,
+    CSS: fakeCSS,
+    Highlight: FakeHighlight,
   });
 });
 
@@ -151,5 +175,69 @@ describe('locateActiveRange', () => {
     const range = locateActiveRange(repeated, second);
     expect(range?.toString()).toBe('foo');
     expect(range?.startOffset).toBe(4);
+  });
+});
+
+describe('repaintFind active-painted result', () => {
+  // The reveal hydrate loop keeps re-painting until this returns true, so the
+  // contract is: true only when the active match's row was actually painted.
+  const scope = itemElement([
+    { line: 1, type: 'change-addition', html: '<span>import foo;</span>' },
+  ]);
+  const present: FindMatch = {
+    itemId: 'x',
+    side: 'additions',
+    lineNumber: 1,
+    columnStart: 0,
+    length: 6,
+  };
+
+  test('returns true when the active row is rendered and painted', () => {
+    expect(
+      repaintFind({
+        scopes: [scope],
+        query: 'import',
+        options: DEFAULT,
+        active: { element: scope, match: present },
+      })
+    ).toBe(true);
+    expect(highlightRegistry.has('cv-find-active')).toBe(true);
+  });
+
+  test('returns false when the active row is not rendered yet', () => {
+    // Same query (so the all-matches tint still paints) but the active match
+    // points at a line that is not in this scope — the not-mounted-yet case.
+    const offscreen: FindMatch = { ...present, lineNumber: 99 };
+    expect(
+      repaintFind({
+        scopes: [scope],
+        query: 'import',
+        options: DEFAULT,
+        active: { element: scope, match: offscreen },
+      })
+    ).toBe(false);
+    expect(highlightRegistry.has('cv-find-active')).toBe(false);
+  });
+
+  test('returns false when there is no active match', () => {
+    expect(
+      repaintFind({
+        scopes: [scope],
+        query: 'import',
+        options: DEFAULT,
+        active: null,
+      })
+    ).toBe(false);
+  });
+
+  test('returns false for an empty query', () => {
+    expect(
+      repaintFind({
+        scopes: [scope],
+        query: '',
+        options: DEFAULT,
+        active: { element: scope, match: present },
+      })
+    ).toBe(false);
   });
 });

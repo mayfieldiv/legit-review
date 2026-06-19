@@ -212,18 +212,23 @@ export interface RepaintFindParams {
   active: { element: HTMLElement; match: FindMatch } | null;
 }
 
+// Returns whether the active-match highlight was painted this call. The caller
+// uses this to keep re-painting after a programmatic scroll until the active
+// row has mounted: false means there is an active match but its row was not in
+// the DOM yet (virtualized out, still scrolling, or content not rendered), so
+// the orange highlight could not be placed.
 export function repaintFind({
   scopes,
   query,
   options,
   active,
-}: RepaintFindParams): void {
+}: RepaintFindParams): boolean {
   if (!highlightsSupported()) {
-    return;
+    return false;
   }
   if (query === '') {
     clearFindHighlights();
-    return;
+    return false;
   }
   const ranges: Range[] = [];
   for (const scope of scopes) {
@@ -239,7 +244,7 @@ export function repaintFind({
   }
   if (ranges.length === 0) {
     clearFindHighlights();
-    return;
+    return false;
   }
   CSS.highlights.set(ALL_HIGHLIGHT, new Highlight(...ranges));
 
@@ -249,7 +254,8 @@ export function repaintFind({
     const activeHighlight = new Highlight(activeRange);
     activeHighlight.priority = 1;
     CSS.highlights.set(ACTIVE_HIGHLIGHT, activeHighlight);
-  } else {
-    CSS.highlights.delete(ACTIVE_HIGHLIGHT);
+    return true;
   }
+  CSS.highlights.delete(ACTIVE_HIGHLIGHT);
+  return false;
 }

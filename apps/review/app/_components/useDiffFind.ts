@@ -15,6 +15,7 @@ import {
 import {
   clearFindHighlights,
   getFindScopes,
+  highlightsSupported,
   locateActiveRange,
   repaintFind,
 } from '@/lib/diffFindHighlight';
@@ -30,6 +31,18 @@ const USER_SCROLL_WINDOW_MS = 180;
 // anchoring. Comfortably longer than a smooth scroll; a user input event clears
 // the guard sooner if they take over mid-animation.
 const PROGRAMMATIC_SETTLE_MS = 600;
+// After a reveal we re-paint the active highlight frame by frame until the
+// target row mounts. The active row of a far jump is not in the DOM when the
+// reveal fires; it mounts some frames later, once the (smooth or instant) scroll
+// and the virtualizer's render settle. Rather than guess a fixed duration — a
+// long smooth scroll on a slow machine can take seconds — we keep the loop alive
+// while the container is still scrolling and stop only once it has held still
+// for a few frames without the row appearing.
+const HYDRATE_SETTLE_FRAMES = 5;
+// Absolute backstop on the hydrate loop, so a container that never stops moving
+// (e.g. the user keeps scrolling) can't spin it forever. Comfortably longer than
+// any realistic scroll settle.
+const HYDRATE_BACKSTOP_MS = 4000;
 // Keys that scroll a focused scroll container. A keydown with one of these
 // (outside a text field) counts as user scroll intent.
 const SCROLL_KEYS = new Set([
@@ -123,6 +136,9 @@ export function useDiffFind({
   const programmaticScrollRef = useRef(false);
   const programmaticScrollTimerRef = useRef<number | null>(null);
   const anchorRafRef = useRef<number | null>(null);
+  // rAF handle for the active-highlight hydrate loop kicked off by a reveal. It
+  // re-paints each frame until the active row mounts (see ensureActiveHighlight).
+  const ensureActiveRafRef = useRef<number | null>(null);
   queryRef.current = query;
   optionsRef.current = options;
   activeIndexRef.current = activeIndex;
@@ -133,11 +149,18 @@ export function useDiffFind({
   // visible DOM text; the active match (matches[activeIndex]) is located in the
   // DOM of its owning item via the viewer's rendered-item map, so the orange
   // highlight always tracks the displayed ordinal rather than scroll geometry.
-  const rebuildHighlights = useStableCallback(() => {
+  // Returns whether the active highlight is now in its final state: true when
+  // there is no active match to show or its row was found and painted, false
+  // when an active match exists but its row has not mounted yet — the signal
+  // ensureActiveHighlight uses to keep retrying.
+  const rebuildHighlights = useStableCallback((): boolean => {
+    if (!highlightsSupported()) {
+      return true;
+    }
     const container = scrollRef.current;
     if (container == null) {
       clearFindHighlights();
-      return;
+      return true;
     }
     const activeMatch = matchesRef.current[activeIndexRef.current] ?? null;
     let active: { element: HTMLElement; match: FindMatch } | null = null;
@@ -150,12 +173,58 @@ export function useDiffFind({
         active = { element, match: activeMatch };
       }
     }
-    repaintFind({
+    const activePainted = repaintFind({
       scopes: getFindScopes(container),
       query: queryRef.current,
       options: optionsRef.current,
       active,
     });
+    return activeMatch == null || activePainted;
+  });
+
+  const cancelEnsureActive = useStableCallback(() => {
+    if (ensureActiveRafRef.current != null) {
+      cancelAnimationFrame(ensureActiveRafRef.current);
+      ensureActiveRafRef.current = null;
+    }
+  });
+
+  // Paint the active highlight now and, if its row has not mounted yet, keep
+  // re-painting each frame until it does. A reveal scrolls the target row into
+  // view, but on a far jump that row is not in the DOM when the reveal fires —
+  // it mounts several frames later once the scroll and virtualizer settle.
+  // Relying on the incidental scroll/mutation observers to catch that mount is
+  // unreliable across environments (event coalescing, the viewer's two-phase
+  // render for big jumps), which left the highlight missing after a long scroll.
+  // This loop makes landing it deterministic: it runs while the container is
+  // still scrolling toward the target and stops once the row is painted, once
+  // scrolling has held still for a few frames, or at the absolute backstop.
+  const ensureActiveHighlight = useStableCallback(() => {
+    cancelEnsureActive();
+    const backstop = performance.now() + HYDRATE_BACKSTOP_MS;
+    let lastScrollTop = scrollRef.current?.scrollTop ?? null;
+    let stillFrames = 0;
+    const step = () => {
+      ensureActiveRafRef.current = null;
+      if (rebuildHighlights()) {
+        return;
+      }
+      const scrollTop = scrollRef.current?.scrollTop ?? null;
+      if (scrollTop === lastScrollTop) {
+        stillFrames += 1;
+      } else {
+        stillFrames = 0;
+        lastScrollTop = scrollTop;
+      }
+      if (
+        stillFrames >= HYDRATE_SETTLE_FRAMES ||
+        performance.now() >= backstop
+      ) {
+        return;
+      }
+      ensureActiveRafRef.current = requestAnimationFrame(step);
+    };
+    ensureActiveRafRef.current = requestAnimationFrame(step);
   });
 
   const scheduleRebuild = useStableCallback(() => {
@@ -315,7 +384,9 @@ export function useDiffFind({
           behavior: 'smooth',
         });
       }
-      scheduleRebuild();
+      // Paint the active highlight, retrying frame by frame until the (possibly
+      // off-screen) target row mounts, so it lands even after a long scroll.
+      ensureActiveHighlight();
     }
   );
 
@@ -339,6 +410,9 @@ export function useDiffFind({
 
   const closeFind = useStableCallback(() => {
     setOpen(false);
+    // Stop any in-flight hydrate loop before clearing, or a queued frame would
+    // re-paint the highlights we just removed.
+    cancelEnsureActive();
     clearFindHighlights();
     scrollRef.current?.focus();
   });
@@ -490,6 +564,7 @@ export function useDiffFind({
         cancelAnimationFrame(anchorRafRef.current);
         anchorRafRef.current = null;
       }
+      cancelEnsureActive();
     };
   }, [
     open,
@@ -497,6 +572,7 @@ export function useDiffFind({
     scheduleRebuild,
     scheduleAnchorCapture,
     markUserScrollInput,
+    cancelEnsureActive,
   ]);
 
   // Capture the anchor from the current viewport when find opens (and after the

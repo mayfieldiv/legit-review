@@ -20,6 +20,7 @@ import { CodeViewSidebar } from './CodeViewSidebar';
 import { CodeViewStatusPanel } from './CodeViewStatusPanel';
 import { CodeViewWrapper } from './CodeViewWrapper';
 import { DiffFindBar } from './DiffFindBar';
+import { FileFinder } from './FileFinder';
 import { singleCommitReviewHref } from './reviewLinks';
 import type { DarkThemeName, LightThemeName } from './themeNames';
 import type {
@@ -33,6 +34,7 @@ import type {
   SavedCommentMetadata,
 } from './types';
 import { useDiffFind } from './useDiffFind';
+import { useFileFinder } from './useFileFinder';
 import { usePatchLoader } from './usePatchLoader';
 import { useThemeCycle } from './useThemeCycle';
 import {
@@ -190,6 +192,9 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
     revision: viewerKey,
     enabled: diffShown,
   });
+
+  // Quick-open file palette (Cmd/Ctrl-P). Jumps to a file in the diff by name.
+  const fileFinder = useFileFinder({ enabled: diffShown });
 
   // A commit-scope review (single commit or range) diffs immutable SHAs, so
   // working-tree edits can't change it — skip the diff-reload path and keep
@@ -736,6 +741,11 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
             persistComment={persistComment}
           />
           <DiffFindBar find={find} />
+          <FileFinder
+            finder={fileFinder}
+            source={treeSource}
+            onSelectFile={handleSelectTreeItem}
+          />
         </>
       ) : (
         <CodeViewStatusPanel

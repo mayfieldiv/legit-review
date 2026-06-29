@@ -343,6 +343,106 @@ describe('createLocalDiffStream', () => {
     expect(text).toContain('scratch.txt');
     expect(text).toContain('+dirty');
   });
+
+  // Builds a classic criss-cross history with two merge bases between `main`
+  // and `feature`, so a single merge base sits behind content both sides share:
+  //
+  //   C0 ── A (shared.txt) ─────┐
+  //    └─── B (other.txt) ──┐   │
+  //   main = merge(A, B) ───┘   │  (has base+shared+other)
+  //   feature = merge(B, A) ────┘  then + feature.txt
+  //
+  // Diffing against either single merge base reports the file from the *other*
+  // base as a spurious addition; the merge preview reports only feature.txt.
+  async function buildCrissCrossRepo(repo: string): Promise<void> {
+    await initRepo(repo);
+    await writeFile(path.join(repo, 'base.txt'), 'base\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'C0');
+
+    git(repo, 'checkout', '-b', 'brancha');
+    await writeFile(path.join(repo, 'shared.txt'), 'from-A\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'A');
+
+    git(repo, 'checkout', '-b', 'branchb', 'main');
+    await writeFile(path.join(repo, 'other.txt'), 'from-B\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'B');
+
+    // main = merge(A, B): fast-forward to A, then a real merge of B.
+    git(repo, 'checkout', 'main');
+    git(repo, 'merge', '--no-edit', 'brancha');
+    git(repo, 'merge', '--no-edit', 'branchb');
+
+    // feature = merge(B, A) + its own contribution.
+    git(repo, 'checkout', '-b', 'feature', 'branchb');
+    git(repo, 'merge', '--no-edit', 'brancha');
+    await writeFile(path.join(repo, 'feature.txt'), 'feature change\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'feature work');
+  }
+
+  test('uses a merge preview when base and HEAD have multiple merge bases', async () => {
+    const repo = path.join(baseDir, 'criss-cross');
+    await buildCrissCrossRepo(repo);
+
+    // Sanity-check the fixture really is criss-cross.
+    expect(
+      git(repo, 'merge-base', '--all', 'main', 'HEAD').split('\n')
+    ).toHaveLength(2);
+
+    // An uncommitted tracked edit and an untracked file, to confirm both still
+    // surface in the preview (via `git stash create` and synthesis).
+    await writeFile(path.join(repo, 'base.txt'), 'base modified\n');
+    await writeFile(path.join(repo, 'scratch.txt'), 'dirty\n');
+
+    const source = await resolveLocalDiffSource(repo, 'main');
+    expect(source.mergedTree).toBeTypeOf('string');
+    // Old side is the base tip itself, not one of the stale merge bases.
+    expect(source.mergeBase).toBe(git(repo, 'rev-parse', 'main'));
+
+    const text = await new Response(createLocalDiffStream(source)).text();
+
+    // The branch's real contribution shows.
+    expect(text).toContain('feature.txt');
+    expect(text).toContain('+feature change');
+    // Content the branch merged in from the other base is already in main, so
+    // the merge would not re-apply it — it must not appear.
+    expect(text).not.toContain('shared.txt');
+    expect(text).not.toContain('other.txt');
+    // Uncommitted tracked edit (via stash create) and untracked file still show.
+    expect(text).toContain('+base modified');
+    expect(text).toContain('scratch.txt');
+    expect(text).toContain('+dirty');
+  });
+
+  test('merge-preview contents read old side from base and new side from the merge', async () => {
+    const repo = path.join(baseDir, 'criss-cross-contents');
+    await buildCrissCrossRepo(repo);
+    await writeFile(path.join(repo, 'base.txt'), 'base modified\n');
+
+    const source = await resolveLocalDiffSource(repo, 'main');
+    const files = await loadDiffFileContents(source, [
+      { path: 'base.txt' },
+      { path: 'feature.txt' },
+    ]);
+
+    expect(files).toEqual([
+      // Old side from the base tip, new side from the merged tree.
+      {
+        path: 'base.txt',
+        oldContents: 'base\n',
+        newContents: 'base modified\n',
+      },
+      // New-only file: absent from the base, present in the merge.
+      {
+        path: 'feature.txt',
+        oldContents: null,
+        newContents: 'feature change\n',
+      },
+    ]);
+  });
 });
 
 describe('untracked file synthesis', () => {

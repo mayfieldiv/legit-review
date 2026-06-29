@@ -18,7 +18,14 @@ Open `/review?repo=/absolute/path/to/repo` (or use the picker at `/`). The
 review scope is chosen by the remaining query params:
 
 - nothing / `&base=<ref>` — working tree against the base ref (default: the
-  remote default branch, then `main`/`master`, then `HEAD`).
+  remote default branch, then `main`/`master`, then `HEAD`). The old side is
+  `merge-base(base, HEAD)`. When the branch and base share more than one merge
+  base (criss-cross / grafted histories), that single base sits behind content
+  both sides share and the diff balloons with base changes the branch merged in;
+  the review then switches to a merge preview — `git merge-tree` computes the
+  tree a merge into the base would produce and diffs the base against it, so you
+  see exactly the patch the merge would apply (uncommitted edits and untracked
+  files included, still live-reloading).
 - `&commit=<ref>` — a single commit's diff (`git show`, i.e. `git diff C^ C`).
   The header shows prev/next controls and `[` / `]` step to the older / newer
   commit along HEAD's first-parent history.
@@ -63,8 +70,11 @@ from any open review via the scope label in the header.
 
 One JSON file per repo+branch under
 `~/.local/share/pierre-review/<sha1(repo)>/<branch>.json` (override the root
-with `PIERRE_REVIEW_DATA_DIR`). Nothing is written into the reviewed repository.
-Branches are isolated; switching branches switches review state.
+with `PIERRE_REVIEW_DATA_DIR`). Nothing is written into the reviewed
+repository's working tree, index, or refs. (A criss-cross merge-preview review
+does write loose tree/blob objects via `git merge-tree`/`git stash create`;
+these are unreferenced and reclaimed by a later `git gc`.) Branches are
+isolated; switching branches switches review state.
 
 ## Agent API
 

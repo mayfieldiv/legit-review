@@ -49,6 +49,10 @@ interface CodeViewSidebarProps {
   onMobileClose(): void;
   onSelectComment(comment: CodeViewSavedCommentEntry): void;
   onSelectItem(itemId: string): void;
+  onToggleCommentResolved(
+    comment: CodeViewSavedCommentEntry,
+    resolved: boolean
+  ): void;
   scrollRef: RefObject<HTMLDivElement | null>;
   source: CodeViewFileTreeSource;
   streaming: boolean;
@@ -63,6 +67,7 @@ export const CodeViewSidebar = memo(function CodeViewSidebar({
   onMobileClose,
   onSelectComment,
   onSelectItem,
+  onToggleCommentResolved,
   scrollRef,
   source,
   streaming,
@@ -240,6 +245,7 @@ export const CodeViewSidebar = memo(function CodeViewSidebar({
               commentSections={commentSections}
               onSelectComment={onSelectComment}
               onSelectItem={onSelectItem}
+              onToggleCommentResolved={onToggleCommentResolved}
             />
           </div>
         </div>

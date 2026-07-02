@@ -394,6 +394,10 @@ export function usePatchLoader({
           replyCount: comment.replies.length,
           resolved: comment.resolved,
           side: comment.side,
+          // `null` contents mean the fetch ran and the file is unreadable or
+          // gone; `undefined` means no fetch happened (yet), which is not
+          // proof the file is missing.
+          stranded: item == null && extraContents === null,
         };
         const section = sectionsByPath.get(comment.filePath);
         if (section == null) {

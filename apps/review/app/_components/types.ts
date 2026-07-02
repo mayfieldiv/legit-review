@@ -166,6 +166,11 @@ export interface CodeViewSavedCommentEntry {
   replyCount: number;
   resolved: boolean;
   side: AnnotationSide;
+  // True when the comment's file exists neither in the review diff nor as
+  // readable working-tree contents (deleted, or renamed in a way git can't
+  // trace). The viewer has no item to navigate to, so the sidebar card is
+  // the thread's only surface and must offer resolve/reopen itself.
+  stranded: boolean;
 }
 
 export interface CodeViewSavedCommentItem {

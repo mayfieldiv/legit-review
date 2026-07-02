@@ -2,7 +2,7 @@
 
 import type { AnnotationSide } from '@pierre/diffs';
 import { IconCheck, IconConvoFill, IconPlus, IconReply } from '@pierre/icons';
-import { memo, type MouseEvent, useMemo, useState } from 'react';
+import { Fragment, memo, type MouseEvent, useMemo, useState } from 'react';
 
 import { CommentAuthorBadge } from './annotation-shared';
 import type {
@@ -10,6 +10,7 @@ import type {
   CodeViewSavedCommentItem,
   CommentLineType,
 } from './types';
+import { Button } from '@/components/ui/button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ui/button-group';
 import { cn } from '@/lib/utils';
 
@@ -19,6 +20,10 @@ interface CodeViewCommentsListProps {
   commentSections: readonly CodeViewSavedCommentItem[];
   onSelectComment?(comment: CodeViewSavedCommentEntry): void;
   onSelectItem?(itemId: string): void;
+  onToggleCommentResolved?(
+    comment: CodeViewSavedCommentEntry,
+    resolved: boolean
+  ): void;
 }
 
 function getCommentLineLabel(
@@ -104,6 +109,7 @@ export const CodeViewCommentsList = memo(function CodeViewCommentsList({
   commentSections,
   onSelectComment,
   onSelectItem,
+  onToggleCommentResolved,
 }: CodeViewCommentsListProps) {
   const [filter, setFilter] = useState<CommentFilter>('open');
   const { openCount, resolvedCount } = useMemo(() => {
@@ -194,79 +200,103 @@ export const CodeViewCommentsList = memo(function CodeViewCommentsList({
               )}
               <div className="rounded-lg border border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
                 {section.comments.map((comment) => (
-                  <button
-                    key={comment.key}
-                    type="button"
-                    // Card surface, hover, and border come from the themed
-                    // chrome (set on the sidebar wrapper) so cards stay
-                    // on-palette for mixed-light/dark themes like slack-ochin
-                    // (light-typed but uses a dark navy sidebar). The
-                    // hardcoded fallbacks cover the brief window before the
-                    // Shiki theme resolves on first render.
-                    // No `transition-colors` here: the bg / border / text
-                    // colors are driven by CSS variables that flip the entire
-                    // chrome on every theme swap, so a smooth color transition
-                    // on each card visibly trails the rest of the UI (header,
-                    // file tree, diff body) which snap instantly. Hover bg is
-                    // snappy enough without an interpolated transition.
-                    className="focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-left text-sm outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]"
-                    onClick={(event) =>
-                      handleRowClick(event, () => onSelectComment?.(comment))
-                    }
-                  >
-                    <CommentAuthorBadge
-                      author={comment.author}
-                      className="size-5 text-[10px]"
-                    />
-                    <div className="flex flex-col gap-0.5 select-text">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-muted-foreground">
-                          {comment.author} commented on{' '}
-                          <span
-                            className={cn(
-                              getCommentLineClassName(
+                  <Fragment key={comment.key}>
+                    <button
+                      type="button"
+                      // Card surface, hover, and border come from the themed
+                      // chrome (set on the sidebar wrapper) so cards stay
+                      // on-palette for mixed-light/dark themes like slack-ochin
+                      // (light-typed but uses a dark navy sidebar). The
+                      // hardcoded fallbacks cover the brief window before the
+                      // Shiki theme resolves on first render.
+                      // No `transition-colors` here: the bg / border / text
+                      // colors are driven by CSS variables that flip the entire
+                      // chrome on every theme swap, so a smooth color transition
+                      // on each card visibly trails the rest of the UI (header,
+                      // file tree, diff body) which snap instantly. Hover bg is
+                      // snappy enough without an interpolated transition.
+                      className="focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-left text-sm outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]"
+                      onClick={(event) =>
+                        handleRowClick(event, () => onSelectComment?.(comment))
+                      }
+                    >
+                      <CommentAuthorBadge
+                        author={comment.author}
+                        className="size-5 text-[10px]"
+                      />
+                      <div className="flex flex-col gap-0.5 select-text">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-muted-foreground">
+                            {comment.author} commented on{' '}
+                            <span
+                              className={cn(
+                                getCommentLineClassName(
+                                  comment.side,
+                                  comment.lineType
+                                ),
+                                'font-medium'
+                              )}
+                            >
+                              {getCommentLineLabel(
                                 comment.side,
+                                comment.lineNumber,
                                 comment.lineType
-                              ),
-                              'font-medium'
-                            )}
-                          >
-                            {getCommentLineLabel(
-                              comment.side,
-                              comment.lineNumber,
-                              comment.lineType
-                            )}
+                              )}
+                            </span>
                           </span>
-                        </span>
-                        {comment.resolved && (
-                          <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-600/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                            <IconCheck size={9} />
-                            Resolved
-                          </span>
-                        )}
-                        {comment.outdated && (
-                          <span className="inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
-                            Outdated
+                          {comment.resolved && (
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-600/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                              <IconCheck size={9} />
+                              Resolved
+                            </span>
+                          )}
+                          {comment.outdated && (
+                            <span className="inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                              Outdated
+                            </span>
+                          )}
+                        </div>
+                        <p
+                          className={cn(
+                            'text-foreground w-full break-words whitespace-pre-wrap',
+                            comment.resolved && 'opacity-60'
+                          )}
+                        >
+                          {comment.message}
+                        </p>
+                        {comment.replyCount > 0 && (
+                          <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+                            <IconReply size={11} />
+                            {comment.replyCount}{' '}
+                            {comment.replyCount === 1 ? 'reply' : 'replies'}
                           </span>
                         )}
                       </div>
-                      <p
-                        className={cn(
-                          'text-foreground w-full break-words whitespace-pre-wrap',
-                          comment.resolved && 'opacity-60'
-                        )}
-                      >
-                        {comment.message}
-                      </p>
-                      {comment.replyCount > 0 && (
-                        <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
-                          <IconReply size={11} />
-                          {comment.replyCount}{' '}
-                          {comment.replyCount === 1 ? 'reply' : 'replies'}
+                    </button>
+                    {/* A stranded thread's file is gone from the review (deleted,
+                      or renamed beyond git's tracing), so the inline thread —
+                      and its resolve control — can never mount. This footer is
+                      the thread's only actionable surface. It sits outside the
+                      row button because buttons cannot nest. */}
+                    {comment.stranded && onToggleCommentResolved != null && (
+                      <div className="flex items-center justify-between gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] px-3 py-2 last:rounded-b-lg last:border-b-0 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
+                        <span className="text-muted-foreground text-xs">
+                          File is missing from the review
                         </span>
-                      )}
-                    </div>
-                  </button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          className="font-medium"
+                          onClick={() =>
+                            onToggleCommentResolved(comment, !comment.resolved)
+                          }
+                        >
+                          {comment.resolved ? 'Unresolve' : 'Resolve'}
+                        </Button>
+                      </div>
+                    )}
+                  </Fragment>
                 ))}
               </div>
             </section>

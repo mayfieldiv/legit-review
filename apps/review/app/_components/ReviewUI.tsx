@@ -639,6 +639,14 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
   const handleCloseFileTreeOverlay = useCallback(() => {
     setFileTreeOverlayOpen(false);
   }, []);
+  // Resolve/reopen for stranded threads (file missing from the review), whose
+  // only surface is the sidebar card — the inline thread footer never mounts.
+  const handleToggleCommentResolved = useCallback(
+    (comment: CodeViewSavedCommentEntry, resolved: boolean) => {
+      handleToggleResolved(comment.itemId, comment.key, resolved);
+    },
+    [handleToggleResolved]
+  );
   const handleSelectComment = useCallback(
     (comment: CodeViewSavedCommentEntry) => {
       setFileTreeOverlayOpen(false);
@@ -706,6 +714,7 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
             mobileOverlayOpen={fileTreeOverlayOpen}
             onMobileClose={handleCloseFileTreeOverlay}
             onSelectComment={handleSelectComment}
+            onToggleCommentResolved={handleToggleCommentResolved}
             scrollRef={scrollRef}
             source={treeSource}
             streaming={loadState === 'streaming'}

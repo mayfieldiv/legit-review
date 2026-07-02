@@ -244,6 +244,9 @@ export function upsertSavedCommentSidebarEntry(
     replyCount: entry.replyCount,
     resolved: entry.resolved,
     side: entry.side,
+    // Saved-comment events come from an annotation in a mounted viewer item,
+    // so the file is present by construction.
+    stranded: false,
   };
 
   const nextSections = [...sections];

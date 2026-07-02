@@ -107,19 +107,26 @@ async function anchorComment(
     return;
   }
 
-  // Out-of-diff anchor: additions-side line numbers refer to the working
-  // tree, deletions-side numbers to the merge-base blob (for an unchanged
-  // file the two are identical).
+  // Out-of-diff anchor: additions-side line numbers refer to the diff's new
+  // side, deletions-side numbers to its old side (for an unchanged file the two
+  // are identical). For an ordinary review the new side is the working tree and
+  // the old side is the merge-base blob; for a merge-preview review (criss-cross
+  // histories) the new side is the merged tree and the old side is the base tip.
   const [contents] = await loadDiffFileContents(source, [
     { path: input.filePath },
   ]);
   const sideContents =
     input.side === 'additions' ? contents?.newContents : contents?.oldContents;
   if (sideContents == null) {
+    const isMergePreview = source.mergedTree != null;
     const location =
       input.side === 'additions'
-        ? 'the working tree'
-        : `the merge base (${source.mergeBase ?? 'no merge base'})`;
+        ? isMergePreview
+          ? `the merged tree (${source.mergedTree})`
+          : 'the working tree'
+        : isMergePreview
+          ? `the base ${source.mergeBase}`
+          : `the merge base (${source.mergeBase ?? 'no merge base'})`;
     throw new ApiError(
       `cannot anchor comment: ${input.filePath} is not readable as text in ${location}`,
       422

@@ -685,21 +685,23 @@ export async function resolveLocalDiffSource(
   let mergeBase: string | undefined;
   let mergedTree: string | undefined;
   if (headSha != null && headSha !== '') {
-    // Unrelated histories have no merge base; reviewing the working tree
-    // against HEAD is the most useful fallback.
-    mergeBase =
-      (await gitText(repoPath, ['merge-base', baseRef, 'HEAD'])) ?? headSha;
-
-    // When baseRef and HEAD share more than one merge base, the single base
-    // above can sit far behind both sides (criss-cross / grafted histories),
-    // ballooning the diff with base content the branch merged in. Switch to a
-    // merge preview so the review shows only the patch a merge would apply.
+    // `merge-base --all` yields both the base to diff against and the
+    // criss-cross signal in one spawn: its first line is the single merge base,
+    // and more than one line means baseRef and HEAD share several. Unrelated
+    // histories have no merge base; reviewing the working tree against HEAD is
+    // the most useful fallback.
     const mergeBases = await gitTextLines(repoPath, [
       'merge-base',
       '--all',
       baseRef,
       'HEAD',
     ]);
+    mergeBase = mergeBases[0] ?? headSha;
+
+    // When baseRef and HEAD share more than one merge base, that single base
+    // can sit far behind both sides (criss-cross / grafted histories),
+    // ballooning the diff with base content the branch merged in. Switch to a
+    // merge preview so the review shows only the patch a merge would apply.
     if (mergeBases.length > 1) {
       const preview = await buildMergePreview(repoPath, baseRef);
       if (preview != null) {
@@ -722,45 +724,48 @@ export async function resolveLocalDiffSource(
 // Computes the merge-preview new side for a criss-cross review: the tree a
 // merge of the working-tree state into `baseRef` would produce. Returns the
 // resolved `baseRef` tip (the diff's old side) and that merged tree, or null
-// when the preview can't be built (merge-tree unsupported/failed) so the caller
-// falls back to the single merge base. `git stash create` snapshots committed
-// HEAD plus uncommitted tracked edits without touching the index, working tree,
-// or refs (it returns empty for a clean tree, in which case HEAD is merged);
-// untracked files are absent from the snapshot and synthesized separately.
+// when the preview can't be built (baseRef unresolvable, the working tree can't
+// be snapshotted, or merge-tree failed) so the caller falls back to the single
+// merge base. `git stash create` snapshots committed HEAD plus uncommitted
+// tracked edits without touching the index, working tree, or refs (it returns
+// empty for a clean tree, in which case HEAD is merged); untracked files are
+// absent from the snapshot and synthesized separately.
 async function buildMergePreview(
   repoPath: string,
   baseRef: string
 ): Promise<{ baseSha: string; mergedTree: string } | null> {
-  const baseSha = await gitText(repoPath, [
-    'rev-parse',
-    '--verify',
-    '--quiet',
-    `${baseRef}^{commit}`,
-  ]);
-  if (baseSha == null || baseSha === '') {
+  const baseSha = await resolveCommitShaOrNull(repoPath, baseRef);
+  if (baseSha == null) {
     return null;
   }
-  const stashCommit = await gitText(repoPath, ['stash', 'create']);
-  const mergeInput =
-    stashCommit != null && stashCommit !== '' ? stashCommit : 'HEAD';
+  // A non-zero exit means `git stash create` could not snapshot the working
+  // tree — e.g. an unmerged index during an in-progress merge. Bail to the
+  // single merge base (which still diffs against the working tree) rather than
+  // silently merging HEAD and dropping the reviewer's uncommitted state. A
+  // clean tree exits 0 with empty output, in which case HEAD is the merge input.
+  const stash = await runGit(repoPath, ['stash', 'create']);
+  if (stash.code !== 0) {
+    return null;
+  }
+  const stashCommit = stash.stdout.toString('utf8').trim();
+  const mergeInput = stashCommit !== '' ? stashCommit : 'HEAD';
   // merge-tree --write-tree writes the merged tree to the object store and
   // prints its OID on the first stdout line. Exit 0 is a clean merge and exit 1
   // a conflicted one; both still yield a usable tree (a conflicted tree carries
   // conflict-marker blobs, which surface in the diff as the conflict they are).
-  // Any other exit (e.g. unrelated histories) prints no tree, so validate the
-  // first line is a real tree object before trusting it.
+  // Any other exit (e.g. unrelated histories) prints no usable tree, so gate on
+  // those two statuses and confirm the first line has an OID shape.
   const result = await runGit(repoPath, [
     'merge-tree',
     '--write-tree',
     baseSha,
     mergeInput,
   ]);
-  const firstLine = result.stdout.toString('utf8').split('\n', 1)[0]?.trim();
-  if (firstLine == null || !/^[0-9a-f]{40,64}$/.test(firstLine)) {
+  if (result.code !== 0 && result.code !== 1) {
     return null;
   }
-  const objectType = await gitText(repoPath, ['cat-file', '-t', firstLine]);
-  if (objectType !== 'tree') {
+  const firstLine = result.stdout.toString('utf8').split('\n', 1)[0]?.trim();
+  if (firstLine == null || !/^[0-9a-f]{40,64}$/.test(firstLine)) {
     return null;
   }
   return { baseSha, mergedTree: firstLine };
@@ -801,6 +806,22 @@ function nonEmptyParam(value: string | null | undefined): string | null {
   return value != null && value !== '' ? value : null;
 }
 
+// Resolves a ref to a full commit SHA, or null when it does not name a commit.
+// Non-throwing counterpart of `resolveCommitSha`, for callers (like the merge
+// preview) that treat an unresolvable ref as "skip" rather than an error.
+async function resolveCommitShaOrNull(
+  repoPath: string,
+  ref: string
+): Promise<string | null> {
+  const sha = await gitText(repoPath, [
+    'rev-parse',
+    '--verify',
+    '--quiet',
+    `${ref}^{commit}`,
+  ]);
+  return sha != null && sha !== '' ? sha : null;
+}
+
 // Resolves a user-supplied ref to a full commit SHA, rejecting anything that
 // is not a commit so a typo can't silently diff the wrong object.
 async function resolveCommitSha(
@@ -808,13 +829,8 @@ async function resolveCommitSha(
   ref: string,
   label: string
 ): Promise<string> {
-  const sha = await gitText(repoPath, [
-    'rev-parse',
-    '--verify',
-    '--quiet',
-    `${ref}^{commit}`,
-  ]);
-  if (sha == null || sha === '') {
+  const sha = await resolveCommitShaOrNull(repoPath, ref);
+  if (sha == null) {
     throw new GitRequestError(`${label} commit not found: ${ref}`);
   }
   return sha;
@@ -1029,9 +1045,10 @@ export async function computeRepoSignature(repoPath: string): Promise<string> {
 }
 
 // Streams the full review patch. Working-tree review emits `git diff
-// <merge-base>` (working tree included) followed by synthesized new-file
-// patches for untracked files, which git diff does not emit on its own.
-// Range review emits `git diff <baseCommit> <toRef>` only — both sides are
+// <merge-base>` against the live working tree — or, for a merge-preview review,
+// `git diff <baseSha> <mergedTree>` between two trees — followed by synthesized
+// new-file patches for untracked files, which git diff does not emit on its
+// own. Range review emits `git diff <baseCommit> <toRef>` only — both sides are
 // committed, so there are no untracked files to synthesize.
 export function createLocalDiffStream(
   source: ReviewDiffSource
@@ -1290,10 +1307,14 @@ export async function loadDiffFileContents(
   }
 
   const { mergeBase, mergedTree } = source;
-  const oldTexts =
+  // Merge-preview review reads the new side from the merged tree, falling back
+  // to the working tree for paths absent from it (untracked files, or comment
+  // anchors outside the diff). Ordinary review reads the working tree directly.
+  // The two blob batches are independent, so load them concurrently.
+  const [oldTexts, treeNewTexts] = await Promise.all([
     mergeBase == null
-      ? files.map(() => null)
-      : await loadBlobTexts(
+      ? Promise.resolve(files.map(() => null))
+      : loadBlobTexts(
           source.repoPath,
           files.map((file) => {
             const sourcePath = file.prevPath ?? file.path;
@@ -1301,21 +1322,18 @@ export async function loadDiffFileContents(
               ? `${mergeBase}:${sourcePath}`
               : null;
           })
-        );
-  // Merge-preview review reads the new side from the merged tree, falling back
-  // to the working tree for paths absent from it (untracked files, or comment
-  // anchors outside the diff). Ordinary review reads the working tree directly.
-  const treeNewTexts =
+        ),
     mergedTree == null
-      ? null
-      : await loadBlobTexts(
+      ? Promise.resolve(null)
+      : loadBlobTexts(
           source.repoPath,
           files.map((file) =>
             isSafeRepoRelativePath(file.path)
               ? `${mergedTree}:${file.path}`
               : null
           )
-        );
+        ),
+  ]);
   return Promise.all(
     files.map(async (file, index) => ({
       path: file.path,

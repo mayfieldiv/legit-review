@@ -443,6 +443,40 @@ describe('createLocalDiffStream', () => {
       },
     ]);
   });
+
+  test('falls back to the single merge base when the working tree cannot be snapshotted', async () => {
+    const repo = path.join(baseDir, 'criss-cross-unmerged');
+    await buildCrissCrossRepo(repo);
+
+    // Leave the index unmerged so `git stash create` fails: a side branch and
+    // `feature` change the same file, and merging the side branch conflicts.
+    git(repo, 'checkout', '-b', 'sidewedge');
+    await writeFile(path.join(repo, 'feature.txt'), 'side change\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'side change');
+
+    git(repo, 'checkout', 'feature');
+    await writeFile(path.join(repo, 'feature.txt'), 'feature side\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-m', 'conflicting feature change');
+
+    // The conflicting merge exits non-zero and leaves unmerged index entries.
+    expect(() => git(repo, 'merge', '--no-edit', 'sidewedge')).toThrow();
+    expect(git(repo, 'status', '--porcelain')).toContain('UU feature.txt');
+
+    // Still criss-cross against main, so the preview path is still attempted.
+    const mergeBases = git(repo, 'merge-base', '--all', 'main', 'HEAD').split(
+      '\n'
+    );
+    expect(mergeBases.length).toBeGreaterThan(1);
+
+    // `git stash create` fails on the unmerged index, so no merge preview is
+    // built; we fall back to the single merge base rather than silently merging
+    // HEAD and dropping the working-tree state from the diff.
+    const source = await resolveLocalDiffSource(repo, 'main');
+    expect(source.mergedTree).toBeUndefined();
+    expect(source.mergeBase).toBe(mergeBases[0]);
+  });
 });
 
 describe('untracked file synthesis', () => {

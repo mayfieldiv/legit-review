@@ -72,9 +72,10 @@ One JSON file per repo+branch under
 `~/.local/share/pierre-review/<sha1(repo)>/<branch>.json` (override the root
 with `PIERRE_REVIEW_DATA_DIR`). Nothing is written into the reviewed
 repository's working tree, index, or refs. (A criss-cross merge-preview review
-does write loose tree/blob objects via `git merge-tree`/`git stash create`;
-these are unreferenced and reclaimed by a later `git gc`.) Branches are
-isolated; switching branches switches review state.
+does write loose objects into the object store — a commit and its trees via
+`git stash create`, the merged tree via `git merge-tree`; these are unreferenced
+and reclaimed by a later `git gc`.) Branches are isolated; switching branches
+switches review state.
 
 ## Agent API
 
@@ -99,12 +100,14 @@ Loopback-only REST, keyed by `?repo=<absolute path>`:
 When `POST /api/comments` is called without a `hunkHash` (the browser always
 sends one), the server anchors the comment itself: a line inside a diff hunk
 gets the hunk's content hash (same Outdated tracking as browser comments), a
-line outside the diff is validated against the file's actual contents (working
-tree for `additions`, merge-base blob for `deletions`) and anchored by its line
-text. A line that exists in neither is rejected with `422` and an actionable
-message — the comment is NOT saved, so a caller with wrong line numbers can
-correct them against `GET /api/diff` and retry instead of a comment landing on
-the wrong code.
+line outside the diff is validated against the diff's two sides for that file
+(`additions` against the new side — the working tree, or the merged tree in a
+merge-preview review; `deletions` against the old side — the merge-base blob, or
+the base tip in a merge-preview review) and anchored by its line text. A line
+that exists in neither is rejected with `422` and an actionable message — the
+comment is NOT saved, so a caller with wrong line numbers can correct them
+against `GET /api/diff` and retry instead of a comment landing on the wrong
+code.
 
 A Claude Code skill for the agent workflows (resolving comments, posting review
 findings) lives at `~/.agents/mayfield-skills/global/local-review/SKILL.md` (not

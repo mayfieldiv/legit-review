@@ -1483,3 +1483,105 @@ async function readWorkingTreeText(
 function isBinaryBuffer(content: Buffer): boolean {
   return content.subarray(0, BINARY_SNIFF_BYTES).includes(0);
 }
+
+// Traces where files moved after review comments were anchored to them:
+// replays committed renames along `mergeBase..HEAD` in commit order, then
+// staged renames, so a path renamed several times maps to the file's current
+// name. Returns only paths that actually moved. A pure rename that is neither
+// committed nor staged is invisible to git (the new file is untracked), so it
+// cannot be traced. The requested paths are matched against parsed git
+// output, never passed as git arguments.
+export async function traceRenamedPaths(
+  repoPath: string,
+  mergeBase: string | undefined,
+  paths: readonly string[]
+): Promise<Map<string, string>> {
+  const renames = new Map<string, string>();
+  if (paths.length === 0) {
+    return renames;
+  }
+  const [committed, staged] = await Promise.all([
+    mergeBase == null
+      ? Promise.resolve([])
+      : listRenameEdges(repoPath, [
+          'log',
+          '--diff-filter=R',
+          '--find-renames',
+          '--name-status',
+          '-z',
+          '--format=',
+          '--reverse',
+          `${mergeBase}..HEAD`,
+        ]),
+    listRenameEdges(repoPath, [
+      'diff',
+      '--cached',
+      '--diff-filter=R',
+      '--find-renames',
+      '--name-status',
+      '-z',
+    ]),
+  ]);
+  const edges = [...committed, ...staged];
+  if (edges.length === 0) {
+    return renames;
+  }
+  // Replay the edges once, moving every tracked path along its rename chain.
+  // Several originals can share a current path mid-replay (one path's chain
+  // may pass through another requested path), so each slot holds a list.
+  const originalsByCurrent = new Map(
+    paths.map((requested) => [requested, [requested]])
+  );
+  for (const edge of edges) {
+    const moved = originalsByCurrent.get(edge.oldPath);
+    if (moved != null) {
+      originalsByCurrent.delete(edge.oldPath);
+      const existing = originalsByCurrent.get(edge.newPath);
+      if (existing != null) {
+        existing.push(...moved);
+      } else {
+        originalsByCurrent.set(edge.newPath, moved);
+      }
+    }
+  }
+  for (const [current, originals] of originalsByCurrent) {
+    for (const original of originals) {
+      if (current !== original) {
+        renames.set(original, current);
+      }
+    }
+  }
+  return renames;
+}
+
+interface RenameEdge {
+  oldPath: string;
+  newPath: string;
+}
+
+// Runs a `--name-status -z` git command filtered to renames and parses its
+// `R<score>\0<old>\0<new>\0` records. A failing command (e.g. an unborn HEAD)
+// yields no edges rather than an error: rename tracing is best-effort.
+async function listRenameEdges(
+  repoPath: string,
+  args: string[]
+): Promise<RenameEdge[]> {
+  const result = await runGit(repoPath, args);
+  if (result.code !== 0) {
+    return [];
+  }
+  const tokens = result.stdout.toString('utf8').split('\0');
+  const edges: RenameEdge[] = [];
+  for (let index = 0; index + 2 < tokens.length; ) {
+    // Some git versions separate commits with a newline even under
+    // `--format=`; it lands glued to the front of the next status token.
+    const status = tokens[index].replace(/^\n+/, '');
+    if (/^R\d+$/.test(status)) {
+      edges.push({ oldPath: tokens[index + 1], newPath: tokens[index + 2] });
+      index += 3;
+    } else {
+      index += 1;
+    }
+  }
+  return edges;
+}

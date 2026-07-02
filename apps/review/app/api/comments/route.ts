@@ -7,6 +7,7 @@ import {
   parseJsonBody,
   requireRepoIdentity,
 } from '@/lib/api';
+import { reconcileCommentRenames } from '@/lib/commentRenames';
 import { emitReviewEvent } from '@/lib/events';
 import {
   createLocalDiffStream,
@@ -37,12 +38,21 @@ const statusSchema = z.enum(['open', 'resolved', 'all']);
 
 // Lists comments for ?repo='s current branch. ?status=open|resolved|all
 // (default all) is the filter agents use to find unaddressed feedback.
+// Comments whose file was renamed since they were written are remapped to
+// the file's current path first, so agents see paths that actually exist.
 export async function GET(request: Request) {
   try {
     const { repoPath, branch } = await requireRepoIdentity(request);
     const statusParam = new URL(request.url).searchParams.get('status');
     const status = statusSchema.catch('all').parse(statusParam ?? 'all');
-    const state = await readState(repoPath, branch);
+    const { state, changed } = await reconcileCommentRenames(
+      repoPath,
+      branch,
+      await readState(repoPath, branch)
+    );
+    if (changed) {
+      emitReviewEvent(repoPath, { type: 'state-changed' });
+    }
     const comments = state.comments.filter((comment) => {
       if (status === 'open') return !comment.resolved;
       if (status === 'resolved') return comment.resolved;

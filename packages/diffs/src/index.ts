@@ -103,6 +103,7 @@ export * from './utils/renderDiffWithHighlighter';
 export * from './utils/renderFileWithHighlighter';
 export * from './utils/resolveConflict';
 export * from './utils/resolveRegion';
+export * from './utils/revealDiffLines';
 export * from './utils/setLanguageOverride';
 export * from './utils/setWrapperNodeProps';
 export * from './utils/trimPatchContext';

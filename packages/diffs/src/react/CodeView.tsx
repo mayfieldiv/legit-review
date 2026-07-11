@@ -18,6 +18,7 @@ import {
 import { createPortal, flushSync } from 'react-dom';
 
 import {
+  type AnnotationSide,
   areOptionsEqual,
   CodeView as CodeViewClass,
   type CodeViewCoordinator,
@@ -31,6 +32,7 @@ import {
   type GetHoveredLineResult,
   type HunkData,
   type LineAnnotation,
+  type RevealLinesRange,
 } from '../index';
 import { areManagedSnapshotsEqual } from '../utils/areManagedSnapshotsEqual';
 import { renderDiffChildren } from './utils/renderDiffChildren';
@@ -96,6 +98,12 @@ export interface CodeViewHandle<LAnnotation> {
   getItem(id: string): CodeViewItem<LAnnotation> | undefined;
   updateItem(item: CodeViewItem<LAnnotation>): boolean;
   updateItemId(oldId: string, newId: string): boolean;
+  revealItemLines(
+    itemId: string,
+    side: AnnotationSide,
+    range: RevealLinesRange,
+    padding?: number
+  ): boolean;
   scrollTo(target: CodeViewScrollTarget): void;
   setSelectedLines(selection: CodeViewLineSelection | null): void;
   getSelectedLines(): CodeViewLineSelection | null;
@@ -434,6 +442,18 @@ function CodeViewInner<LAnnotation = undefined>(
         }
 
         return instance.updateItemId(oldId, newId);
+      },
+      revealItemLines(itemId, side, range, padding) {
+        // Reveals are opportunistic (callers re-apply on later refreshes), so
+        // a not-yet-mounted instance is a quiet no-op rather than an error.
+        return (
+          cachedDataRef.current.instance?.revealItemLines(
+            itemId,
+            side,
+            range,
+            padding
+          ) ?? false
+        );
       },
       scrollTo(target) {
         const { instance } = cachedDataRef.current;

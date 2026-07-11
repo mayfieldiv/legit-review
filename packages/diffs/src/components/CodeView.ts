@@ -16,6 +16,7 @@ import {
   queueRender,
 } from '../managers/UniversalRenderingManager';
 import type {
+  AnnotationSide,
   CodeViewDiffItem,
   CodeViewFileItem,
   CodeViewItem,
@@ -42,6 +43,7 @@ import { areThemesEqual } from '../utils/areThemesEqual';
 import { createWindowFromScrollPosition } from '../utils/createWindowFromScrollPosition';
 import { isStyleNode } from '../utils/isStyleNode';
 import { prefersReducedMotion } from '../utils/prefersReducedMotion';
+import type { RevealLinesRange } from '../utils/revealDiffLines';
 import { roundToDevicePixel } from '../utils/roundToDevicePixel';
 import type { WorkerPoolManager } from '../worker';
 import type { FileOptions } from './File';
@@ -1184,6 +1186,25 @@ export class CodeView<LAnnotation = undefined> {
 
   public getItem(itemId: string): CodeViewItem<LAnnotation> | undefined {
     return this.idToItem.get(itemId)?.item;
+  }
+
+  // Expands collapsed unchanged context inside a diff item so the given
+  // 1-based line range is rendered, e.g. to surface a comment anchored to a
+  // line outside every hunk. Returns false for unknown or non-diff items and
+  // for ranges the diff cannot reveal (partial diff, out-of-bounds lines).
+  public revealItemLines(
+    itemId: string,
+    side: AnnotationSide,
+    range: RevealLinesRange,
+    padding = 0
+  ): boolean {
+    const item = this.idToItem.get(itemId);
+    if (item == null || item.type !== 'diff') {
+      return false;
+    }
+    // Pass the item record's diff: instances bind their copy lazily during
+    // layout, and reveals must work on items that haven't rendered yet.
+    return item.instance.revealLines(side, range, padding, item.item.fileDiff);
   }
 
   public updateItem(input: CodeViewItem<LAnnotation>): boolean {

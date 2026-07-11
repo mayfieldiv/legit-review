@@ -3,6 +3,7 @@ import { toHtml } from 'hast-util-to-html';
 
 import {
   CUSTOM_HEADER_SLOT_ID,
+  DEFAULT_COLLAPSED_CONTEXT_THRESHOLD,
   DEFAULT_THEMES,
   DEFAULT_TOKENIZE_MAX_LENGTH,
   DIFFS_TAG_NAME,
@@ -29,6 +30,7 @@ import {
 } from '../renderers/DiffHunksRenderer';
 import { SVGSpriteSheet } from '../sprite';
 import type {
+  AnnotationSide,
   AppliedThemeStyleCache,
   BaseDiffOptions,
   CustomPreProperties,
@@ -69,6 +71,10 @@ import { isDiffPlainText } from '../utils/isDiffPlainText';
 import { isStyleNode } from '../utils/isStyleNode';
 import { parseDiffFromFile } from '../utils/parseDiffFromFile';
 import { prerenderHTMLIfNecessary } from '../utils/prerenderHTMLIfNecessary';
+import {
+  getHunkExpansionsToRevealLines,
+  type RevealLinesRange,
+} from '../utils/revealDiffLines';
 import { getMeasuredScrollbarGutter } from '../utils/scrollbarGutter';
 import { setPreNodeProperties } from '../utils/setWrapperNodeProps';
 import type { WorkerPoolManager } from '../worker';
@@ -718,6 +724,47 @@ export class FileDiff<LAnnotation = undefined> {
     );
     this.rerender();
   };
+
+  // Expands the minimal collapsed unchanged context so a 1-based line range
+  // on one diff side is rendered (plus optional padding), e.g. to surface an
+  // annotation anchored to a line outside every hunk. Lines already visible
+  // leave the expansion state untouched. Returns false when the range cannot
+  // be revealed: no diff yet, a partial diff with no hidden lines to expand,
+  // or lines outside the file's bounds. `fileDiff` lets callers that own the
+  // diff record (e.g. CodeView items, which bind instances lazily during
+  // layout) reveal before this instance has rendered.
+  public revealLines(
+    side: AnnotationSide,
+    range: RevealLinesRange,
+    padding = 0,
+    fileDiff: FileDiffMetadata | undefined = this.fileDiff
+  ): boolean {
+    if (fileDiff == null) {
+      return false;
+    }
+    const {
+      expandUnchanged = false,
+      collapsedContextThreshold = DEFAULT_COLLAPSED_CONTEXT_THRESHOLD,
+    } = this.options;
+    const steps = getHunkExpansionsToRevealLines({
+      fileDiff,
+      side,
+      range,
+      padding,
+      expandedHunks: expandUnchanged
+        ? true
+        : this.hunksRenderer.getExpandedHunksMap(),
+      collapsedContextThreshold,
+      errorPrefix: 'FileDiff.revealLines',
+    });
+    if (steps == null) {
+      return false;
+    }
+    for (const step of steps) {
+      this.expandHunk(step.hunkIndex, step.direction, step.lineCount);
+    }
+    return true;
+  }
 
   public render({
     oldFile,

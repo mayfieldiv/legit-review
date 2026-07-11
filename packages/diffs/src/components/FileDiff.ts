@@ -760,8 +760,21 @@ export class FileDiff<LAnnotation = undefined> {
     if (steps == null) {
       return false;
     }
-    for (const step of steps) {
-      this.expandHunk(step.hunkIndex, step.direction, step.lineCount);
+    // Every expandHunk() call re-renders (and, in virtualized subclasses,
+    // invalidates layout caches), so when a range straddles several collapsed
+    // regions, write all but the last step straight into the renderer's
+    // expansion state and let the final expandHunk() call run the single
+    // invalidate-and-render pass for the whole batch.
+    for (const [index, step] of steps.entries()) {
+      if (index < steps.length - 1) {
+        this.hunksRenderer.expandHunk(
+          step.hunkIndex,
+          step.direction,
+          step.lineCount
+        );
+      } else {
+        this.expandHunk(step.hunkIndex, step.direction, step.lineCount);
+      }
     }
     return true;
   }

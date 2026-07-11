@@ -5,6 +5,7 @@ import type {
   HunkExpansionRegion,
 } from '../types';
 import {
+  type ExpandedRegionResult,
   getExpandedRegion,
   getTrailingExpandedRegion,
 } from './virtualDiffLayout';
@@ -126,12 +127,7 @@ interface GetRegionExpansionStepProps {
   hunkIndex: number;
   // The region's current render state: how many of its lines are already
   // shown at its top (fromStart) and bottom (fromEnd), and its full size.
-  region: {
-    fromStart: number;
-    fromEnd: number;
-    rangeSize: number;
-    renderAll: boolean;
-  };
+  region: ExpandedRegionResult;
   // Line number (on the requested side) of the region's last hidden-able line.
   regionEnd: number;
   start: number;

@@ -39,8 +39,8 @@ import { useFileFinder } from './useFileFinder';
 import { usePatchLoader } from './usePatchLoader';
 import { useThemeCycle } from './useThemeCycle';
 import {
+  expandItemIfCollapsed,
   getHunkIndexForLine,
-  incrementItemVersion,
   removeSavedCommentSidebarEntry,
   upsertSavedCommentSidebarEntry,
 } from './utils';
@@ -339,10 +339,8 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
       return;
     }
     const item = viewer.getItem(itemId);
-    if (item != null && item.collapsed === true) {
-      item.collapsed = false;
-      item.version = typeof item.version === 'number' ? item.version + 1 : 1;
-      viewer.updateItem(item);
+    if (item != null) {
+      expandItemIfCollapsed(viewer, item);
     }
     viewer.scrollTo({
       type: 'item',
@@ -654,27 +652,25 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
       setFileTreeOverlayOpen(false);
       // Plain file items have a single pane: their selections and scroll
       // targets must not carry a diff side.
-      const item = viewerRef.current?.getItem(comment.itemId);
+      const viewer = viewerRef.current;
+      const item = viewer?.getItem(comment.itemId);
       const isFileItem = item?.type === 'file';
       const diffSide =
         comment.range.endSide ?? comment.range.side ?? comment.side;
       // Surface the thread before scrolling: viewed files stay collapsed and
       // out-of-hunk threads live in collapsed unchanged context, neither of
-      // which a scroll alone would make visible.
-      if (item != null && item.collapsed === true) {
-        item.collapsed = false;
-        incrementItemVersion(item);
-        viewerRef.current?.updateItem(item);
+      // which a scroll alone would make visible. revealItemLines no-ops for
+      // non-diff items.
+      if (viewer != null && item != null) {
+        expandItemIfCollapsed(viewer, item);
       }
-      if (item?.type === 'diff') {
-        viewerRef.current?.revealItemLines(
-          comment.itemId,
-          diffSide,
-          comment.range,
-          DEFAULT_COMMENT_CONTEXT_LINES
-        );
-      }
-      viewerRef.current?.setSelectedLines({
+      viewer?.revealItemLines(
+        comment.itemId,
+        diffSide,
+        comment.range,
+        DEFAULT_COMMENT_CONTEXT_LINES
+      );
+      viewer?.setSelectedLines({
         id: comment.itemId,
         range: isFileItem
           ? { start: comment.range.start, end: comment.range.end }
@@ -684,7 +680,7 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
               endSide: comment.range.endSide ?? diffSide,
             },
       });
-      viewerRef.current?.scrollTo({
+      viewer?.scrollTo({
         type: 'line',
         id: comment.itemId,
         lineNumber: comment.range.end,

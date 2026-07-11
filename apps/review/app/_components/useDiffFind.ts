@@ -5,6 +5,7 @@ import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
 import { type RefObject, useEffect, useRef, useState } from 'react';
 
 import type { CommentMetadata } from './types';
+import { expandItemIfCollapsed } from './utils';
 import {
   type FindAnchor,
   findClosestMatchIndex,
@@ -369,10 +370,8 @@ export function useDiffFind({
       const viewer = viewerRef.current;
       if (opts.scroll && viewer != null) {
         const item = viewer.getItem(match.itemId);
-        if (item != null && item.collapsed === true) {
-          item.collapsed = false;
-          item.version = (item.version ?? 0) + 1;
-          viewer.updateItem(item);
+        if (item != null) {
+          expandItemIfCollapsed(viewer, item);
         }
         beginProgrammaticScroll();
         viewer.scrollTo({

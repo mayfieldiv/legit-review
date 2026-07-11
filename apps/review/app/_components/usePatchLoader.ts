@@ -64,7 +64,9 @@ import {
   classifyCommentLineType,
   computeFileViewed,
   computeHunkViewedState,
+  expandItemIfCollapsed,
   getFileContentsLine,
+  incrementItemVersion,
   isDraftAnnotation,
   selectCommentContextPathsToFetch,
 } from './utils';
@@ -265,7 +267,7 @@ export function usePatchLoader({
           continue;
         }
         item.collapsed = targetCollapsed;
-        item.version = getNextItemVersion(item);
+        incrementItemVersion(item);
         viewer.updateItem(item);
       }
     }
@@ -449,7 +451,7 @@ export function usePatchLoader({
           );
           const drafts = (item.annotations ?? []).filter(isDraftAnnotation);
           item.annotations = [...drafts, ...serverAnnotations];
-          item.version = getNextItemVersion(item);
+          incrementItemVersion(item);
           viewer?.updateItem(item);
           continue;
         }
@@ -510,7 +512,7 @@ export function usePatchLoader({
 
         const drafts = (item.annotations ?? []).filter(isDraftAnnotation);
         item.annotations = [...drafts, ...serverAnnotations];
-        item.version = getNextItemVersion(item);
+        incrementItemVersion(item);
         viewer?.updateItem(item);
       }
 
@@ -523,6 +525,16 @@ export function usePatchLoader({
       }
     }
   );
+
+  // Re-applies the latest hydrated review state to the loaded items; no-op
+  // before the first hydration. Used wherever a later event (new items,
+  // full-context upgrade, viewer mount) invalidates the previous projection.
+  const reprojectReviewState = useStableCallback(() => {
+    const state = reviewStateRef.current;
+    if (state != null) {
+      applyServerState(state);
+    }
+  });
 
   // Fetches working-tree contents for commented files outside the diff and
   // mounts compact context-only diff items so their comments render with code
@@ -622,10 +634,7 @@ export function usePatchLoader({
           (prev) => new Map([...(prev ?? []), ...newFileEntries])
         );
       }
-      const state = reviewStateRef.current;
-      if (state != null) {
-        applyServerState(state);
-      }
+      reprojectReviewState();
     }
   );
 
@@ -958,7 +967,7 @@ export function usePatchLoader({
               continue;
             }
             item.fileDiff = upgraded;
-            item.version = getNextItemVersion(item);
+            incrementItemVersion(item);
             viewerRef.current?.updateItem(item);
             // Each updateItem re-renders synchronously; yield periodically so
             // a large diff's upgrade pass can't lock up the main thread.
@@ -974,10 +983,7 @@ export function usePatchLoader({
           // Re-project review state now that the unmodified lines around
           // hunks exist: reveals for open out-of-hunk comments were no-ops
           // against the partial diffs the state first hydrated onto.
-          const state = reviewStateRef.current;
-          if (state != null) {
-            applyServerState(state);
-          }
+          reprojectReviewState();
         }
 
         console.time('--     request time');
@@ -1227,7 +1233,6 @@ export function usePatchLoader({
       controller.abort();
     };
   }, [
-    applyServerState,
     base,
     commit,
     from,
@@ -1236,6 +1241,7 @@ export function usePatchLoader({
     loadAttempt,
     onLoadStart,
     repo,
+    reprojectReviewState,
     tryApplyLineHashTarget,
     viewerRef,
   ]);
@@ -1256,10 +1262,7 @@ export function usePatchLoader({
   // initialItems). Annotations ride along on the item objects, but comment
   // reveals need a live viewer, so re-project once it exists.
   const handleViewerReady = useStableCallback(() => {
-    const state = reviewStateRef.current;
-    if (state != null) {
-      applyServerState(state);
-    }
+    reprojectReviewState();
     tryApplyLineHashTarget();
   });
 
@@ -1407,9 +1410,7 @@ function applyCodeViewLineHashTarget(
   }
 
   if (item.collapsed === true) {
-    item.collapsed = false;
-    item.version = getNextItemVersion(item);
-    if (!viewer.updateItem(item)) {
+    if (!expandItemIfCollapsed(viewer, item)) {
       return false;
     }
     viewer.getInstance()?.render(true);
@@ -1431,10 +1432,6 @@ function applyCodeViewItemIdRename(
   rename: CodeViewItemIdRename
 ): void {
   viewer?.updateItemId(rename.oldId, rename.newId);
-}
-
-function getNextItemVersion(item: { version?: string | number }): number {
-  return typeof item.version === 'number' ? item.version + 1 : 1;
 }
 
 function replaceLocationHash(hash: string | null): void {

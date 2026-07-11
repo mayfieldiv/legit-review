@@ -5,6 +5,7 @@ import type {
   CodeViewItem,
   FileDiffMetadata,
 } from '@pierre/diffs';
+import type { CodeViewHandle } from '@pierre/diffs/react';
 import type { GitStatus } from '@pierre/trees';
 
 import type {
@@ -23,6 +24,21 @@ import type {
 
 export function incrementItemVersion(item: CodeViewItem<CommentMetadata>) {
   item.version = typeof item.version === 'number' ? item.version + 1 : 1;
+}
+
+// Expands a collapsed item and pushes the change into the viewer, e.g. before
+// scrolling to or revealing content inside it. No-op for items that are
+// already expanded. Returns false only when the viewer rejected the update.
+export function expandItemIfCollapsed(
+  viewer: CodeViewHandle<CommentMetadata>,
+  item: CodeViewItem<CommentMetadata>
+): boolean {
+  if (item.collapsed !== true) {
+    return true;
+  }
+  item.collapsed = false;
+  incrementItemVersion(item);
+  return viewer.updateItem(item);
 }
 
 export function isDiffItem(

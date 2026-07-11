@@ -19,7 +19,10 @@ const EXPANDABLE_CHANGE_TYPES: ReadonlySet<ChangeTypes> = new Set([
   'change',
   'rename-changed',
 ]);
-const DEFAULT_COMMENT_CONTEXT_LINES = 3;
+// Unchanged lines shown around a comment's range, both when building
+// synthetic context-only diffs here and when expanding collapsed context
+// around out-of-hunk comments in real diffs.
+export const DEFAULT_COMMENT_CONTEXT_LINES = 3;
 const SPLIT_WITH_NEWLINES = /(?<=\n)/;
 
 export function isFullContextCandidate(fileDiff: FileDiffMetadata): boolean {

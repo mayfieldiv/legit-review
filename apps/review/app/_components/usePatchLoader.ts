@@ -31,6 +31,7 @@ import { CODE_VIEW_BATCH_COUNT, getInitialBatchSize } from './constants';
 import {
   buildCommentContextFileDiff,
   buildFullContextFileDiff,
+  DEFAULT_COMMENT_CONTEXT_LINES,
   type FullContextResponse,
   isFullContextCandidate,
 } from './fullContext';
@@ -370,6 +371,20 @@ export function usePatchLoader({
             metadata,
           });
           annotationsByItemId.set(item.id, annotations);
+          // An open thread must be visible in the diff even when its lines
+          // sit in collapsed unchanged context outside every hunk, so expand
+          // that region. No-op until the full-context upgrade delivers the
+          // hidden lines (this projection re-runs afterwards); outdated
+          // threads are skipped because their line numbers describe content
+          // the current diff no longer has.
+          if (!comment.resolved && !outdated) {
+            viewerRef.current?.revealItemLines(
+              item.id,
+              comment.side,
+              comment.range,
+              DEFAULT_COMMENT_CONTEXT_LINES
+            );
+          }
         } else if (item != null) {
           const annotations = fileAnnotationsByItemId.get(item.id) ?? [];
           annotations.push({ lineNumber: comment.range.end, metadata });
@@ -955,6 +970,14 @@ export function usePatchLoader({
               }
             }
           }
+
+          // Re-project review state now that the unmodified lines around
+          // hunks exist: reveals for open out-of-hunk comments were no-ops
+          // against the partial diffs the state first hydrated onto.
+          const state = reviewStateRef.current;
+          if (state != null) {
+            applyServerState(state);
+          }
         }
 
         console.time('--     request time');
@@ -1204,6 +1227,7 @@ export function usePatchLoader({
       controller.abort();
     };
   }, [
+    applyServerState,
     base,
     commit,
     from,
@@ -1227,6 +1251,17 @@ export function usePatchLoader({
   const retryLoad = useCallback(() => {
     setLoadAttempt((attempt) => attempt + 1);
   }, []);
+
+  // Review state can hydrate before the viewer mounts (items buffer in
+  // initialItems). Annotations ride along on the item objects, but comment
+  // reveals need a live viewer, so re-project once it exists.
+  const handleViewerReady = useStableCallback(() => {
+    const state = reviewStateRef.current;
+    if (state != null) {
+      applyServerState(state);
+    }
+    tryApplyLineHashTarget();
+  });
 
   // Every loaded item in display order, including collapsed and not-yet-rendered
   // ones. In-app find searches this rather than the DOM so it can reach content
@@ -1252,7 +1287,7 @@ export function usePatchLoader({
     isFileViewed,
     loadState,
     onLineLinkChange: handleLineLinkChange,
-    onViewerReady: tryApplyLineHashTarget,
+    onViewerReady: handleViewerReady,
     refreshReviewState: hydrateReviewState,
     retryLoad,
     reviewState,

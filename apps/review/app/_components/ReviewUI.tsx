@@ -21,6 +21,7 @@ import { CodeViewStatusPanel } from './CodeViewStatusPanel';
 import { CodeViewWrapper } from './CodeViewWrapper';
 import { DiffFindBar } from './DiffFindBar';
 import { FileFinder } from './FileFinder';
+import { DEFAULT_COMMENT_CONTEXT_LINES } from './fullContext';
 import { singleCommitReviewHref } from './reviewLinks';
 import type { DarkThemeName, LightThemeName } from './themeNames';
 import type {
@@ -39,6 +40,7 @@ import { usePatchLoader } from './usePatchLoader';
 import { useThemeCycle } from './useThemeCycle';
 import {
   getHunkIndexForLine,
+  incrementItemVersion,
   removeSavedCommentSidebarEntry,
   upsertSavedCommentSidebarEntry,
 } from './utils';
@@ -656,6 +658,22 @@ function ReviewUIInner({ base, commit, from, to, repo }: ReviewUIProps) {
       const isFileItem = item?.type === 'file';
       const diffSide =
         comment.range.endSide ?? comment.range.side ?? comment.side;
+      // Surface the thread before scrolling: viewed files stay collapsed and
+      // out-of-hunk threads live in collapsed unchanged context, neither of
+      // which a scroll alone would make visible.
+      if (item != null && item.collapsed === true) {
+        item.collapsed = false;
+        incrementItemVersion(item);
+        viewerRef.current?.updateItem(item);
+      }
+      if (item?.type === 'diff') {
+        viewerRef.current?.revealItemLines(
+          comment.itemId,
+          diffSide,
+          comment.range,
+          DEFAULT_COMMENT_CONTEXT_LINES
+        );
+      }
       viewerRef.current?.setSelectedLines({
         id: comment.itemId,
         range: isFileItem
